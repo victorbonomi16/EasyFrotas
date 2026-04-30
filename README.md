@@ -93,6 +93,16 @@ Com o aplicativo, a empresa consegue reduzir erros de preenchimento, melhorar o 
 
 ---
 
+## Requisitos do Projeto
+
+**Beneficiário 01**
+- Nome ou empresa: Cooperativa Energética Cocal - COOPERCOCAL
+- CPF/CNPJ: 86.532.348/0001-45
+- Endereço: Avenida Dr, Av. Polidoro Santiago, 555 - Centro, Cocal do Sul - SC, 88845-000
+- Relato do Problema (o que o cliente relatou): O mesmo se mostrou ansioso em utilizar o software, pois vê que a potencial solução auxiliaria no controle digital da sua frota.
+
+---
+
 ## Status
 
 Projeto em desenvolvimento.
