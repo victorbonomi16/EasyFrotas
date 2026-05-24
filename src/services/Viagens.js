@@ -11,10 +11,11 @@ export async function obterViagemAbertaPorUtilizador({ idUtilizador, empresaId }
     .maybeSingle();
 }
 
-export async function startTrip({ vehicleId, kmInicial, observacaoInicio }) {
+export async function startTrip({ vehicleId, kmInicial, destino, observacaoInicio }) {
   return supabase.rpc('start_trip', {
     p_vehicle_id: vehicleId,
     p_km_inicial: kmInicial,
+    p_destino: destino ?? null,
     p_observacao_inicio: observacaoInicio ?? null,
   });
 }
@@ -41,7 +42,7 @@ export async function listTrips({ profile, periodDays = 30 }) {
 
   let query = supabase
     .from('trips')
-    .select('*, vehicles (placa, modelo), profiles (nome), trip_occurrences(*)')
+    .select('*, vehicles (placa, modelo, marca), profiles (nome), trip_occurrences(*)')
     .eq('empresa_id', profile.empresa_id)
     .gte('created_at', fromDate.toISOString())
     .order('created_at', { ascending: false });

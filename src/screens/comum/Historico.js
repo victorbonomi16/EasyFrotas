@@ -53,7 +53,23 @@ function formatKmNoUnit(value) {
   return Number(value).toLocaleString('pt-BR');
 }
 
-function resolveTripVisual(trip) {
+function resolveTripVisual(trip, isGestor) {
+  if (!isGestor) {
+    if (trip?.status === 'finalizada') {
+      return {
+        statusBg: '#A7F3D0',
+        statusText: '#065F46',
+        statusLabel: 'Concluída',
+      };
+    }
+
+    return {
+      statusBg: '#E2E8F0',
+      statusText: '#334155',
+      statusLabel: 'Em andamento',
+    };
+  }
+
   const hasOpenOccurrence = Boolean(
     trip?.trip_occurrences?.some((item) => item.status !== OCCURRENCE_STATUS.RESOLVIDO),
   );
@@ -86,6 +102,20 @@ function firstOccurrence(trip) {
     return null;
   }
   return trip.trip_occurrences[0];
+}
+
+function buildVehicleTitle(trip, isGestor) {
+  const brand = String(trip?.vehicles?.marca ?? '').trim();
+  const model = String(trip?.vehicles?.modelo ?? '').trim();
+
+  if (!isGestor) {
+    if (brand && model) {
+      return `${brand} ${model}`;
+    }
+    return model || brand || 'Veículo';
+  }
+
+  return model || 'Veículo';
 }
 
 export function Historico() {
@@ -122,6 +152,7 @@ export function Historico() {
     profile?.perfil === 'gestor'
       ? 'Você está vendo viagens de toda a empresa.'
       : 'Você está vendo apenas suas viagens.';
+  const isGestor = profile?.perfil === 'gestor';
 
   const content = useMemo(() => {
     if (trips.length === 0) {
@@ -134,10 +165,10 @@ export function Historico() {
     }
 
     return trips.map((trip) => {
-      const visual = resolveTripVisual(trip);
+      const visual = resolveTripVisual(trip, isGestor);
       const occurrence = firstOccurrence(trip);
       const distanceLabel = formatDistanceShort(trip);
-      const vehicleModel = trip.vehicles?.modelo || 'Veículo';
+      const vehicleTitle = buildVehicleTitle(trip, isGestor);
       const vehiclePlate = trip.vehicles?.placa || '-';
 
       return (
@@ -160,14 +191,14 @@ export function Historico() {
             </View>
             <View style={styles.vehicleInfo}>
               <Text style={styles.vehicleModel}>
-                {vehicleModel} {' ⬢ '} {vehiclePlate}
+                {isGestor ? `${vehicleTitle} ⬢ ${vehiclePlate}` : vehicleTitle}
               </Text>
-              <Text style={styles.vehicleSubline}>{trip.profiles?.nome ?? '-'}</Text>
+              <Text style={styles.vehicleSubline}>{isGestor ? trip.profiles?.nome ?? '-' : vehiclePlate}</Text>
             </View>
             <Text style={styles.distanceValue}>{distanceLabel}</Text>
           </View>
 
-          {occurrence ? (
+          {isGestor && occurrence ? (
             <View style={styles.occurrenceBox}>
               <View style={styles.occurrenceTypeRow}>
                 <Ionicons name="warning-outline" size={14} color="#DC2626" />
@@ -190,7 +221,7 @@ export function Historico() {
         </Card>
       );
     });
-  }, [trips]);
+  }, [isGestor, trips]);
 
   return (
     <ScreenContainer onRefresh={loadTrips} refreshing={isLoading}>

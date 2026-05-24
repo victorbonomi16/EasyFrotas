@@ -256,7 +256,7 @@ export function Inicio() {
                 <Text style={styles.infoValue}>{formatKm(openTrip.km_inicial)}</Text>
                 <PrimaryButton
                   title="Finalizar viagem"
-                  onPress={() => navigation.navigate('FinalizarViagem', { tripId: openTrip.id })}
+                  onPress={() => navigation.navigate('ViagemAtual')}
                 />
               </View>
             ) : (

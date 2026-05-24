@@ -1,20 +1,23 @@
 ﻿import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Card } from '../../components/ui/Card';
+import { FloatingCardModal } from '../../components/ui/FloatingCardModal';
+import { LeitorQuilometragemModal } from '../../components/ui/LeitorQuilometragemModal';
 import { NfcPromptModal } from '../../components/ui/NfcPromptModal';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { ScreenContainer } from '../../components/ui/ScreenContainer';
 import { TextField } from '../../components/ui/TextField';
 import { useAuth } from '../../context/useAuth';
-import { isNfcCancelError, normalizeTagUid, scanNfcTag } from '../../services/Nfc';
-import { obterViagemAbertaPorUtilizador } from '../../services/Viagens';
-import { findVehicleById, findVehicleByNfcTag } from '../../services/Veiculos';
+import { leituraCameraDisponivel } from '../../services/LeituraQuilometragem';
+import { cancelNfcOperation, isNfcCancelError, scanNfcTag } from '../../services/Nfc';
+import { finishTrip, obterViagemAbertaPorUtilizador } from '../../services/Viagens';
+import { findVehicleById, findVehicleByNfcTag, findVehicleByPlate, normalizeVehiclePlate } from '../../services/Veiculos';
 import { colors, radius, shadows, spacing } from '../../theme/tokens';
-import { labels, VEHICLE_STATUS } from '../../utils/constants';
-import { formatKm } from '../../utils/formatters';
+import { labels, OCCURRENCE_TYPES, VEHICLE_STATUS } from '../../utils/constants';
+import { formatKm, sanitizeNumber } from '../../utils/formatters';
 
 function formatElapsedTime(startedAt, nowMs) {
   if (!startedAt) {
@@ -67,19 +70,39 @@ function extractVehicleIdFromPayload(payload) {
   return null;
 }
 
+const FINISH_STEP = {
+  CONFIRM: 'confirm',
+  KM: 'km',
+  OCCURRENCE: 'occurrence',
+};
+
+const occurrenceOptions = [
+  { value: OCCURRENCE_TYPES.ABASTECIMENTO, label: 'Abastecimento', icon: 'water-outline' },
+  { value: OCCURRENCE_TYPES.MANUTENCAO, label: 'Manutenção', icon: 'build-outline' },
+  { value: OCCURRENCE_TYPES.OUTROS, label: 'Outros', icon: 'remove-outline' },
+];
+
 export function ViagemEmAndamento({ navigation }) {
   const START_METHOD = {
     NFC: 'nfc',
     MANUAL: 'manual',
   };
+  const cameraReaderEnabled = leituraCameraDisponivel();
   const { profile } = useAuth();
   const [openTrip, setOpenTrip] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isScanningNfc, setIsScanningNfc] = useState(false);
   const [startMethod, setStartMethod] = useState(START_METHOD.NFC);
-  const [manualTagCode, setManualTagCode] = useState('');
-  const [isSearchingManualCode, setIsSearchingManualCode] = useState(false);
+  const [manualVehiclePlate, setManualVehiclePlate] = useState('');
+  const [isSearchingManualPlate, setIsSearchingManualPlate] = useState(false);
   const [nowMs, setNowMs] = useState(Date.now());
+  const [finishStep, setFinishStep] = useState(null);
+  const [kmFinal, setKmFinal] = useState('');
+  const [occurrenceType, setOccurrenceType] = useState(null);
+  const [occurrenceDescription, setOccurrenceDescription] = useState('');
+  const [isFinishingTrip, setIsFinishingTrip] = useState(false);
+  const [isLeitorKmFinalVisible, setIsLeitorKmFinalVisible] = useState(false);
+  const finishStepAnim = useRef(new Animated.Value(0)).current;
 
   const loadOpenTrip = useCallback(async () => {
     if (!profile) {
@@ -120,6 +143,39 @@ export function ViagemEmAndamento({ navigation }) {
     return () => clearInterval(timerId);
   }, [openTrip?.started_at]);
 
+  useEffect(
+    () => () => {
+      cancelNfcOperation();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!finishStep) {
+      finishStepAnim.setValue(0);
+      return;
+    }
+
+    finishStepAnim.setValue(0);
+    Animated.spring(finishStepAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      damping: 17,
+      stiffness: 180,
+      mass: 0.8,
+    }).start();
+  }, [finishStep, finishStepAnim]);
+
+  const ensureVehicleAvailable = useCallback((vehicle) => {
+    if (!vehicle) {
+      throw new Error('Veículo não encontrado.');
+    }
+    if (vehicle.status !== VEHICLE_STATUS.DISPONIVEL) {
+      throw new Error(`Veículo indisponível. Status atual: ${labels.vehicleStatus[vehicle.status] ?? vehicle.status}.`);
+    }
+    return vehicle;
+  }, []);
+
   const resolveVehicleFromTag = useCallback(
     async ({ tagUid, ndefTextPayload = null }) => {
       let { data: vehicle, error } = await findVehicleByNfcTag({
@@ -145,13 +201,9 @@ export function ViagemEmAndamento({ navigation }) {
       if (!vehicle) {
         throw new Error('TAG não vinculada. Solicite ao gestor o cadastro desta TAG no veículo.');
       }
-      if (vehicle.status !== VEHICLE_STATUS.DISPONIVEL) {
-        throw new Error(`Veículo indisponível. Status atual: ${labels.vehicleStatus[vehicle.status] ?? vehicle.status}.`);
-      }
-
-      return vehicle;
+      return ensureVehicleAvailable(vehicle);
     },
-    [profile.empresa_id],
+    [ensureVehicleAvailable, profile.empresa_id],
   );
 
   const goToStartTripByTag = useCallback(
@@ -163,7 +215,7 @@ export function ViagemEmAndamento({ navigation }) {
   );
 
   const onScanNfc = async () => {
-    if (!profile || isScanningNfc || isSearchingManualCode) {
+    if (!profile || isScanningNfc || isSearchingManualPlate) {
       return;
     }
 
@@ -184,30 +236,135 @@ export function ViagemEmAndamento({ navigation }) {
     }
   };
 
+  const onCancelNfcScan = useCallback(async () => {
+    await cancelNfcOperation();
+    setIsScanningNfc(false);
+  }, []);
+
   const onManualSearch = async () => {
-    if (!profile || isScanningNfc || isSearchingManualCode) {
+    if (!profile || isScanningNfc || isSearchingManualPlate) {
       return;
     }
 
-    const normalizedTagCode = normalizeTagUid(manualTagCode);
-    if (!normalizedTagCode) {
-      Alert.alert('Código inválido', 'Digite o código da TAG para buscar o veículo.');
+    const normalizedPlate = normalizeVehiclePlate(manualVehiclePlate);
+    if (!normalizedPlate) {
+      Alert.alert('Placa inválida', 'Digite a placa do veículo para iniciar a viagem.');
       return;
     }
 
-    setIsSearchingManualCode(true);
+    setIsSearchingManualPlate(true);
     try {
-      await goToStartTripByTag({ tagUid: normalizedTagCode });
+      const { data: vehicle, error } = await findVehicleByPlate({
+        empresaId: profile.empresa_id,
+        plate: normalizedPlate,
+      });
+
+      if (error) {
+        throw error;
+      }
+      if (!vehicle) {
+        throw new Error('Veículo não encontrado para a placa informada.');
+      }
+
+      const availableVehicle = ensureVehicleAvailable(vehicle);
+      navigation.navigate('IniciarViagem', { vehicle: availableVehicle });
     } catch (error) {
-      Alert.alert('Falha na busca manual', error.message);
+      Alert.alert('Falha na busca por placa', error.message);
     } finally {
-      setIsSearchingManualCode(false);
+      setIsSearchingManualPlate(false);
     }
   };
+
+  const openFinishFlow = useCallback(() => {
+    if (!openTrip || isLoading) {
+      return;
+    }
+    setIsLeitorKmFinalVisible(false);
+    setKmFinal(String(openTrip.km_inicial ?? ''));
+    setOccurrenceType(null);
+    setOccurrenceDescription('');
+    setFinishStep(FINISH_STEP.CONFIRM);
+  }, [isLoading, openTrip]);
+
+  const closeFinishFlow = useCallback(() => {
+    if (isFinishingTrip) {
+      return;
+    }
+    setIsLeitorKmFinalVisible(false);
+    setFinishStep(null);
+  }, [isFinishingTrip]);
+
+  const onConfirmKm = useCallback(() => {
+    if (!openTrip) {
+      return;
+    }
+    const parsedKm = sanitizeNumber(kmFinal);
+    if (parsedKm < Number(openTrip.km_inicial)) {
+      Alert.alert('Quilometragem inválida', 'A quilometragem final deve ser maior ou igual à inicial.');
+      return;
+    }
+    setFinishStep(FINISH_STEP.OCCURRENCE);
+  }, [kmFinal, openTrip]);
+
+  const onSubmitFinish = useCallback(async () => {
+    if (!openTrip) {
+      return;
+    }
+
+    const parsedKm = sanitizeNumber(kmFinal);
+    if (parsedKm < Number(openTrip.km_inicial)) {
+      Alert.alert('Quilometragem inválida', 'A quilometragem final deve ser maior ou igual à inicial.');
+      return;
+    }
+
+    setIsFinishingTrip(true);
+    try {
+      const { error } = await finishTrip({
+        tripId: openTrip.id,
+        kmFinal: parsedKm,
+        observacaoFim: null,
+        occurrenceType,
+        occurrenceDescription: occurrenceDescription.trim(),
+      });
+      if (error) {
+        throw error;
+      }
+
+      setIsLeitorKmFinalVisible(false);
+      setFinishStep(null);
+      await loadOpenTrip();
+      navigation.navigate('AbasPrincipais', { screen: 'Historico' });
+    } catch (error) {
+      Alert.alert('Falha ao encerrar', error.message);
+    } finally {
+      setIsFinishingTrip(false);
+    }
+  }, [kmFinal, loadOpenTrip, navigation, occurrenceDescription, occurrenceType, openTrip]);
 
   const elapsedLabel = useMemo(
     () => formatElapsedTime(openTrip?.started_at, nowMs),
     [openTrip?.started_at, nowMs],
+  );
+
+  const finishStepAnimatedStyle = useMemo(
+    () => ({
+      opacity: finishStepAnim,
+      transform: [
+        {
+          translateY: finishStepAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [18, 0],
+          }),
+        },
+        {
+          scale: finishStepAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.98, 1],
+          }),
+        },
+      ],
+    }),
+    [finishStepAnim],
   );
 
   if (!openTrip) {
@@ -217,6 +374,8 @@ export function ViagemEmAndamento({ navigation }) {
           visible={isScanningNfc}
           title="Escaneando TAG NFC"
           subtitle="Aproxime a TAG do veículo para iniciar a viagem."
+          cancelLabel="Cancelar leitura"
+          onCancel={onCancelNfcScan}
         />
 
         <Card style={styles.tripStatusCard}>
@@ -249,7 +408,7 @@ export function ViagemEmAndamento({ navigation }) {
             <Pressable
               accessibilityRole="button"
               onPress={() => setStartMethod(START_METHOD.NFC)}
-              disabled={isScanningNfc || isSearchingManualCode}
+              disabled={isScanningNfc || isSearchingManualPlate}
               style={({ pressed }) => [
                 styles.methodOptionButton,
                 startMethod === START_METHOD.NFC ? styles.methodOptionButtonActive : null,
@@ -274,7 +433,7 @@ export function ViagemEmAndamento({ navigation }) {
             <Pressable
               accessibilityRole="button"
               onPress={() => setStartMethod(START_METHOD.MANUAL)}
-              disabled={isScanningNfc || isSearchingManualCode}
+              disabled={isScanningNfc || isSearchingManualPlate}
               style={({ pressed }) => [
                 styles.methodOptionButton,
                 startMethod === START_METHOD.MANUAL ? styles.methodOptionButtonActive : null,
@@ -292,7 +451,7 @@ export function ViagemEmAndamento({ navigation }) {
                   startMethod === START_METHOD.MANUAL ? styles.methodOptionTextActive : null,
                 ]}
               >
-                Código manual
+                PLACA
               </Text>
             </Pressable>
           </View>
@@ -303,7 +462,7 @@ export function ViagemEmAndamento({ navigation }) {
                 title={isScanningNfc ? 'Escaneando TAG NFC...' : 'Escanear TAG NFC'}
                 onPress={onScanNfc}
                 loading={isScanningNfc}
-                disabled={isLoading || isSearchingManualCode}
+                disabled={isLoading || isSearchingManualPlate}
                 style={styles.fullWidthButton}
               />
               <Text style={styles.methodHelperText}>
@@ -313,16 +472,16 @@ export function ViagemEmAndamento({ navigation }) {
           ) : (
             <View style={styles.methodBlock}>
               <TextField
-                label="Código da TAG"
-                value={manualTagCode}
-                onChangeText={(value) => setManualTagCode(value.toUpperCase())}
-                placeholder="Ex: 04A1B2C3D4E5"
+                label="Placa do veículo"
+                value={manualVehiclePlate}
+                onChangeText={(value) => setManualVehiclePlate(value.toUpperCase())}
+                placeholder="Ex: ABC1D23"
                 autoCapitalize="characters"
               />
               <PrimaryButton
-                title={isSearchingManualCode ? 'Buscando código...' : 'Buscar por código manual'}
+                title={isSearchingManualPlate ? 'Buscando placa...' : 'Buscar por placa'}
                 onPress={onManualSearch}
-                loading={isSearchingManualCode}
+                loading={isSearchingManualPlate}
                 disabled={isLoading || isScanningNfc}
                 style={styles.fullWidthButton}
               />
@@ -340,69 +499,79 @@ export function ViagemEmAndamento({ navigation }) {
       contentStyle={styles.container}
       safeEdges={['top', 'left', 'right', 'bottom']}
     >
-      <View style={styles.topBlock}>
-        <View style={styles.iconBox}>
-          <Ionicons name="car-sport" size={34} color="#047857" />
-        </View>
-        <Text style={styles.title}>Viagem em andamento</Text>
-        <Text style={styles.subtitle}>Conduza com segurança.</Text>
-      </View>
-
-      <Card style={styles.timerCard}>
-        <Text style={styles.timerLabel}>Tempo decorrido</Text>
-        <Text style={styles.timerValue}>{elapsedLabel}</Text>
+      <Card style={styles.tripHeaderCard}>
+        <Text style={styles.tripHeaderTitle}>Viagem em andamento</Text>
+        <Text style={styles.tripHeaderSubtitle}>Conduza com segurança durante todo o percurso.</Text>
       </Card>
 
       <Card style={styles.vehicleCard}>
-        <View style={styles.vehicleTop}>
-          <View style={styles.vehicleIcon}>
-            <Ionicons name="car-outline" size={18} color={colors.textMuted} />
-          </View>
-          <View style={styles.vehicleInfo}>
-            <Text style={styles.vehicleModel} numberOfLines={1}>
-              {openTrip.vehicles?.modelo || 'Veículo em uso'}
-            </Text>
-            <Text style={styles.vehiclePlate}>{openTrip.vehicles?.placa || '-'}</Text>
-          </View>
-          <View style={styles.fleetTag}>
-            <Text style={styles.fleetTagText}>Viagem ativa</Text>
+        <View style={styles.imageWrap}>
+          {openTrip.vehicles?.foto_url ? (
+            <Image source={{ uri: openTrip.vehicles.foto_url }} style={styles.vehicleImage} resizeMode="cover" />
+          ) : (
+            <View style={styles.imageFallback}>
+              <Ionicons name="car-sport-outline" size={58} color={colors.textMuted} />
+              <Text style={styles.imageFallbackText}>Sem foto do veículo</Text>
+            </View>
+          )}
+          <View style={styles.statusChip}>
+            <Text style={styles.statusChipText}>Em uso</Text>
           </View>
         </View>
 
-        <View style={styles.divider} />
+        <View style={styles.mainInfoRow}>
+          <View style={styles.mainInfoText}>
+            <Text style={styles.vehicleModel} numberOfLines={1}>
+              {openTrip.vehicles?.modelo || 'Veículo em uso'}
+            </Text>
+            <Text style={styles.vehicleCategory} numberOfLines={1}>
+              {openTrip.vehicles?.marca || 'Veículo corporativo'}
+            </Text>
+          </View>
+          <View style={styles.plateBox}>
+            <Text style={styles.vehiclePlate} numberOfLines={1}>
+              {openTrip.vehicles?.placa || '-'}
+            </Text>
+          </View>
+        </View>
 
         <View style={styles.metricsRow}>
           <View style={styles.metricItem}>
-            <Text style={styles.metricTitle}>Início</Text>
+            <Ionicons name="time-outline" size={18} color={colors.textMuted} />
             <View style={styles.metricValueRow}>
-              <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+              <Text style={styles.metricLabel}>Início</Text>
               <Text style={styles.metricValue}>{formatStartHour(openTrip.started_at)}</Text>
             </View>
           </View>
           <View style={styles.metricItem}>
-            <Text style={styles.metricTitle}>KM inicial</Text>
+            <Ionicons name="speedometer-outline" size={18} color={colors.textMuted} />
             <View style={styles.metricValueRow}>
-              <Ionicons name="speedometer-outline" size={14} color={colors.textMuted} />
+              <Text style={styles.metricLabel}>KM inicial</Text>
               <Text style={styles.metricValue}>{formatKm(openTrip.km_inicial)}</Text>
             </View>
           </View>
+        </View>
+
+        <View style={styles.elapsedSection}>
+          <Text style={styles.elapsedLabel}>Tempo decorrido</Text>
+          <Text style={styles.elapsedValue}>{elapsedLabel}</Text>
         </View>
       </Card>
 
       <View style={styles.footer}>
         <Pressable
           accessibilityRole="button"
-          onPress={() => navigation.navigate('FinalizarViagem', { tripId: openTrip.id })}
-          disabled={isLoading}
+          onPress={openFinishFlow}
+          disabled={isLoading || isFinishingTrip}
           style={({ pressed }) => [
             styles.finishButton,
             {
-              opacity: isLoading ? 0.65 : pressed ? 0.9 : 1,
+              opacity: isLoading || isFinishingTrip ? 0.65 : pressed ? 0.9 : 1,
               transform: [{ scale: pressed ? 0.99 : 1 }],
             },
           ]}
         >
-          {isLoading ? (
+          {isLoading || isFinishingTrip ? (
             <ActivityIndicator color="#E7FFF6" size="small" />
           ) : (
             <View style={styles.finishButtonInner}>
@@ -412,6 +581,183 @@ export function ViagemEmAndamento({ navigation }) {
           )}
         </Pressable>
       </View>
+
+      <FloatingCardModal visible={Boolean(finishStep)} onRequestClose={closeFinishFlow}>
+        <Animated.View style={finishStepAnimatedStyle}>
+          <Card style={styles.finishFlowCard}>
+            {finishStep === FINISH_STEP.CONFIRM ? (
+              <View style={styles.finishFlowBodyCenter}>
+                <View style={styles.finishFlowIconWrap}>
+                  <Ionicons name="checkmark-done-circle-outline" size={34} color={colors.primary} />
+                </View>
+                <Text style={styles.finishFlowTitle}>Finalizar viagem agora?</Text>
+                <Text style={styles.finishFlowSubtitle}>
+                  Confirme para iniciar o encerramento da viagem com os dados finais.
+                </Text>
+              </View>
+            ) : null}
+
+            {finishStep === FINISH_STEP.KM ? (
+              <View style={styles.finishFlowBody}>
+                <Text style={styles.finishFlowTitleLeft}>Confirmação de quilometragem</Text>
+                <Text style={styles.finishFlowSubtitleLeft}>
+                  Informe o KM final atual para concluir o fechamento da viagem.
+                </Text>
+
+                <View style={styles.finishFlowKmGrid}>
+                  <View style={styles.finishFlowKmReadonly}>
+                    <Text style={styles.finishFlowFieldLabel}>KM inicial</Text>
+                    <Text style={styles.finishFlowKmValue}>{formatKm(openTrip.km_inicial)}</Text>
+                  </View>
+                  <View style={styles.finishFlowKmInputWrap}>
+                    <Text style={styles.finishFlowFieldLabel}>KM final *</Text>
+                    <TextInput
+                      value={kmFinal}
+                      onChangeText={setKmFinal}
+                      keyboardType="numeric"
+                      placeholder="Ex: 45280"
+                      placeholderTextColor={colors.textMuted}
+                      style={styles.finishFlowKmInput}
+                    />
+                  </View>
+                  {cameraReaderEnabled ? (
+                    <PrimaryButton
+                      title="Ler KM com câmera"
+                      variant="ghost"
+                      onPress={() => setIsLeitorKmFinalVisible(true)}
+                      style={styles.finishFlowKmCameraButton}
+                    />
+                  ) : (
+                    <Text style={styles.finishFlowCameraUnavailable}>
+                      Leitura por câmera disponível na APK.
+                    </Text>
+                  )}
+                </View>
+              </View>
+            ) : null}
+
+            {finishStep === FINISH_STEP.OCCURRENCE ? (
+              <View style={styles.finishFlowBody}>
+                <Text style={styles.finishFlowTitleLeft}>Ocorrências da viagem</Text>
+                <Text style={styles.finishFlowSubtitleLeft}>
+                  Se necessário, registre uma ocorrência. Este passo é opcional.
+                </Text>
+
+                <View style={styles.finishFlowOccurrencePills}>
+                  {occurrenceOptions.map((item) => {
+                    const selected = occurrenceType === item.value;
+                    return (
+                      <Pressable
+                        key={item.value}
+                        accessibilityRole="button"
+                        onPress={() => {
+                          const next = selected ? null : item.value;
+                          setOccurrenceType(next);
+                          if (!next) {
+                            setOccurrenceDescription('');
+                          }
+                        }}
+                        style={({ pressed }) => [
+                          styles.finishFlowOccurrencePill,
+                          selected ? styles.finishFlowOccurrencePillSelected : null,
+                          pressed ? styles.finishFlowOccurrencePillPressed : null,
+                        ]}
+                      >
+                        <Ionicons name={item.icon} size={14} color={selected ? '#065F46' : '#4B5563'} />
+                        <Text
+                          style={[
+                            styles.finishFlowOccurrencePillText,
+                            selected ? styles.finishFlowOccurrencePillTextSelected : null,
+                          ]}
+                        >
+                          {item.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {occurrenceType ? (
+                  <View style={styles.finishFlowOccurrenceInputWrap}>
+                    <Text style={styles.finishFlowFieldLabel}>Descrição (opcional)</Text>
+                    <TextInput
+                      value={occurrenceDescription}
+                      onChangeText={setOccurrenceDescription}
+                      placeholder="Ex: Detalhes da ocorrência..."
+                      placeholderTextColor={colors.textMuted}
+                      multiline
+                      numberOfLines={4}
+                      style={styles.finishFlowOccurrenceInput}
+                    />
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
+            <View style={styles.finishFlowActions}>
+              {finishStep === FINISH_STEP.CONFIRM ? (
+                <>
+                  <PrimaryButton
+                    title="Cancelar"
+                    variant="outline"
+                    onPress={closeFinishFlow}
+                    style={styles.finishFlowActionButton}
+                  />
+                  <PrimaryButton
+                    title="Continuar"
+                    onPress={() => setFinishStep(FINISH_STEP.KM)}
+                    style={styles.finishFlowActionButton}
+                  />
+                </>
+              ) : null}
+
+              {finishStep === FINISH_STEP.KM ? (
+                <>
+                  <PrimaryButton
+                    title="Voltar"
+                    variant="outline"
+                    onPress={() => setFinishStep(FINISH_STEP.CONFIRM)}
+                    style={styles.finishFlowActionButton}
+                  />
+                  <PrimaryButton
+                    title="Confirmar KM"
+                    onPress={onConfirmKm}
+                    style={styles.finishFlowActionButton}
+                  />
+                </>
+              ) : null}
+
+              {finishStep === FINISH_STEP.OCCURRENCE ? (
+                <>
+                  <PrimaryButton
+                    title="Voltar"
+                    variant="outline"
+                    onPress={() => setFinishStep(FINISH_STEP.KM)}
+                    style={styles.finishFlowActionButton}
+                  />
+                  <PrimaryButton
+                    title={isFinishingTrip ? 'Finalizando...' : 'Encerrar viagem'}
+                    onPress={onSubmitFinish}
+                    loading={isFinishingTrip}
+                    style={styles.finishFlowActionButton}
+                  />
+                </>
+              ) : null}
+            </View>
+          </Card>
+        </Animated.View>
+      </FloatingCardModal>
+
+      {cameraReaderEnabled ? (
+        <LeitorQuilometragemModal
+          visible={isLeitorKmFinalVisible}
+          onClose={() => setIsLeitorKmFinalVisible(false)}
+          onConfirmKm={(valor) => setKmFinal(String(valor))}
+          minKm={Number(openTrip?.km_inicial ?? 0)}
+          titulo="Leitura do KM final"
+          subtitulo="Posicione o odômetro na moldura para validar o encerramento da viagem."
+        />
+      ) : null}
     </ScreenContainer>
   );
 }
@@ -524,118 +870,302 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: 'center',
   },
-  topBlock: {
+  tripHeaderCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    borderColor: '#D7DEE8',
+    backgroundColor: '#F8FBFF',
+    paddingVertical: spacing.md,
+  },
+  tripHeaderTitle: {
+    color: colors.primaryDark,
+    fontSize: 22,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  tripHeaderSubtitle: {
+    color: colors.textMuted,
+    fontSize: 15,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  vehicleCard: {
+    borderColor: '#D6DEE8',
+    padding: 0,
+    overflow: 'hidden',
+    ...shadows.medium,
+  },
+  imageWrap: {
+    position: 'relative',
+    height: 206,
+    backgroundColor: '#E9EEF4',
+  },
+  vehicleImage: {
+    width: '100%',
+    height: '100%',
+  },
+  imageFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  imageFallbackText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  statusChip: {
+    position: 'absolute',
+    top: spacing.md,
+    right: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: '#DBEAFE',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  statusChipText: {
+    color: '#1E3A8A',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  mainInfoRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+  },
+  mainInfoText: {
+    flex: 1,
+    gap: 2,
+  },
+  vehicleModel: {
+    color: colors.primaryDark,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  vehicleCategory: {
+    color: '#303747',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  plateBox: {
+    minHeight: 54,
+    minWidth: 142,
+    borderRadius: radius.md - 2,
+    borderWidth: 1,
+    borderColor: '#C8D0DB',
+    backgroundColor: '#EFF3F8',
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vehiclePlate: {
+    color: colors.primaryDark,
+    fontSize: 22 / 1.2,
+    fontWeight: '900',
+    letterSpacing: 1.4,
+  },
+  metricsRow: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: '#E1E6EE',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+  },
+  elapsedSection: {
     alignItems: 'center',
     gap: spacing.xs,
     marginTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: '#E1E6EE',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
   },
-  iconBox: {
-    width: 88,
-    height: 88,
-    borderRadius: 20,
-    backgroundColor: '#DCE9FA',
+  elapsedLabel: {
+    color: '#666E7A',
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.35,
+  },
+  elapsedValue: {
+    color: colors.primaryDark,
+    fontSize: 30,
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  finishFlowCard: {
+    gap: spacing.md,
+    borderColor: '#D7DEE8',
+    ...shadows.medium,
+  },
+  finishFlowBodyCenter: {
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  finishFlowBody: {
+    gap: spacing.sm,
+  },
+  finishFlowIconWrap: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    backgroundColor: '#E5ECF8',
     borderWidth: 1,
     borderColor: '#D0DCEE',
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadows.soft,
   },
-  title: {
-    color: '#3D4450',
+  finishFlowTitle: {
+    color: colors.primaryDark,
+    fontSize: 22,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  finishFlowSubtitle: {
+    color: colors.textMuted,
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  finishFlowTitleLeft: {
+    color: colors.primaryDark,
     fontSize: 20,
+    fontWeight: '900',
+  },
+  finishFlowSubtitleLeft: {
+    color: colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  finishFlowFieldLabel: {
+    color: '#6B7280',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  finishFlowKmGrid: {
+    gap: spacing.xs,
+  },
+  finishFlowKmReadonly: {
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#E9EEF6',
+    padding: spacing.sm,
+    gap: spacing.xxs,
+  },
+  finishFlowKmInputWrap: {
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFD',
+    padding: spacing.sm,
+    gap: spacing.xxs,
+  },
+  finishFlowKmValue: {
+    color: colors.primaryDark,
+    fontSize: 17,
     fontWeight: '800',
   },
-  subtitle: {
-    color: '#646D7B',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  timerCard: {
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingVertical: spacing.lg,
-  },
-  timerLabel: {
-    color: '#666E7A',
-    fontSize: 14,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  timerValue: {
+  finishFlowKmInput: {
+    minHeight: 36,
+    paddingVertical: 0,
     color: colors.primaryDark,
-    fontSize: 32,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  finishFlowKmCameraButton: {
+    minHeight: 42,
+    marginTop: spacing.xxs,
+  },
+  finishFlowCameraUnavailable: {
+    marginTop: spacing.xxs,
+    color: colors.textMuted,
+    fontSize: 12,
     fontWeight: '500',
-    letterSpacing: 1.2,
+    textAlign: 'left',
   },
-  vehicleCard: {
-    gap: spacing.sm,
-    padding: spacing.sm,
+  finishFlowOccurrencePills: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
   },
-  vehicleTop: {
+  finishFlowOccurrencePill: {
+    minHeight: 34,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFD',
+    paddingHorizontal: spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: spacing.xxs,
   },
-  vehicleIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.sm,
-    backgroundColor: '#DCE9FA',
-    alignItems: 'center',
-    justifyContent: 'center',
+  finishFlowOccurrencePillSelected: {
+    borderColor: '#34D399',
+    backgroundColor: '#A7F3D0',
   },
-  vehicleInfo: {
-    flex: 1,
+  finishFlowOccurrencePillPressed: {
+    opacity: 0.85,
   },
-  vehicleModel: {
+  finishFlowOccurrencePillText: {
     color: '#4B5563',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  vehiclePlate: {
-    color: '#4B5563',
-    fontSize: 16,
-    fontWeight: '700',
-    marginTop: 1,
-  },
-  fleetTag: {
-    borderRadius: radius.pill,
-    backgroundColor: '#E3ECFA',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  fleetTagText: {
-    color: '#5A6578',
     fontSize: 12,
     fontWeight: '700',
   },
-  divider: {
-    height: 1,
-    backgroundColor: '#DEE5EF',
+  finishFlowOccurrencePillTextSelected: {
+    color: '#065F46',
   },
-  metricsRow: {
+  finishFlowOccurrenceInputWrap: {
+    gap: spacing.xxs,
+  },
+  finishFlowOccurrenceInput: {
+    minHeight: 90,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFD',
+    padding: spacing.sm,
+    textAlignVertical: 'top',
+    color: colors.text,
+    fontSize: 14,
+  },
+  finishFlowActions: {
     flexDirection: 'row',
-    gap: spacing.md,
+    gap: spacing.xs,
+  },
+  finishFlowActionButton: {
+    flex: 1,
   },
   metricItem: {
     flex: 1,
+    flexDirection: 'row',
     gap: spacing.xs,
+    alignItems: 'center',
   },
-  metricTitle: {
-    color: '#676F7B',
+  metricLabel: {
+    color: '#454C5A',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '500',
   },
   metricValueRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    gap: 1,
   },
   metricValue: {
-    color: '#3F4755',
-    fontSize: 16,
-    fontWeight: '800',
+    color: colors.primaryDark,
+    fontSize: 17,
+    fontWeight: '900',
   },
   footer: {
     marginTop: spacing.xs,
@@ -645,8 +1175,8 @@ const styles = StyleSheet.create({
     minHeight: 56,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#047857',
-    backgroundColor: '#047857',
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
     ...shadows.soft,

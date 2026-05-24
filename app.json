@@ -20,7 +20,44 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.NFC",
+        "android.permission.NFC",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.NFC",
+        "android.permission.NFC",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.anonymous.easyfrotas"
+    },
+    "plugins": [
+      [
+        "react-native-nfc-manager",
+        {
+          "nfcPermission": "Permita o uso de NFC para identificar e vincular TAGs dos veículos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permita acesso à galeria para enviar a foto do veículo."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permita acesso a camera para leitura automatica da quilometragem."
+        }
+      ]
+    ],
+    "extra": {
+      "supabaseUrl": "https://SEU-PROJETO.supabase.co",
+      "supabaseAnonKey": "SUA_CHAVE_ANON_PUBLICA"
     },
     "web": {
       "favicon": "./assets/favicon.png"

@@ -69,6 +69,10 @@ async function closeTechnologyRequest() {
   }
 }
 
+export async function cancelNfcOperation() {
+  await closeTechnologyRequest();
+}
+
 export function isNfcCancelError(error) {
   const message = toSafeString(error?.message).toLowerCase();
   return (

@@ -1,8 +1,63 @@
-﻿import { createContext, useCallback, useEffect, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { toFriendlyError } from '../services/errorUtils';
 import { buscarPerfil, obterSessaoAtiva, entrarComSenha, encerrarSessao } from '../services/Autenticacao';
 import { supabase } from '../services/supabaseClient';
+
+const PROFILE_CACHE_KEY = '@easyfrotas:profile-cache';
+const SESSION_TIMEOUT_MS = 8000;
+const PROFILE_TIMEOUT_MS = 10000;
+
+function withTimeout(promise, timeoutMs, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]);
+}
+
+function isConnectivityError(error) {
+  const message = String(error?.message ?? '').toLowerCase();
+  return (
+    message.includes('network request failed') ||
+    message.includes('failed to fetch') ||
+    message.includes('network') ||
+    message.includes('offline') ||
+    message.includes('timed out') ||
+    message.includes('timeout') ||
+    message.includes('connection')
+  );
+}
+
+async function readProfileCache() {
+  try {
+    const raw = await AsyncStorage.getItem(PROFILE_CACHE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function writeProfileCache(profile) {
+  if (!profile?.id) {
+    return AsyncStorage.removeItem(PROFILE_CACHE_KEY);
+  }
+  return AsyncStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
+}
+
+async function clearProfileCache() {
+  try {
+    await AsyncStorage.removeItem(PROFILE_CACHE_KEY);
+  } catch (error) {
+    // Ignore cleanup failures.
+  }
+}
 
 export const AuthContext = createContext(null);
 
@@ -11,9 +66,15 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
+  const mountedRef = useRef(true);
 
-  const carregarPerfil = useCallback(async (idUtilizador) => {
-    const { data, error } = await buscarPerfil(idUtilizador);
+  const carregarPerfilRemoto = useCallback(async (idUtilizador) => {
+    const { data, error } = await withTimeout(
+      buscarPerfil(idUtilizador),
+      PROFILE_TIMEOUT_MS,
+      'Tempo de resposta esgotado ao carregar seu perfil.',
+    );
+
     if (error) {
       throw error;
     }
@@ -24,69 +85,126 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
+  const sincronizarPerfil = useCallback(
+    async ({ sessao, cachedProfile = null }) => {
+      if (!sessao?.user?.id || !mountedRef.current) {
+        return;
+      }
+
+      try {
+        const perfilAtualizado = await carregarPerfilRemoto(sessao.user.id);
+        if (!mountedRef.current) {
+          return;
+        }
+        setProfile(perfilAtualizado);
+        await writeProfileCache(perfilAtualizado);
+        setAuthError(null);
+      } catch (error) {
+        if (!mountedRef.current) {
+          return;
+        }
+
+        const hasFallbackProfile = Boolean(cachedProfile?.id === sessao.user.id || profile?.id === sessao.user.id);
+        if (isConnectivityError(error) && hasFallbackProfile) {
+          return;
+        }
+
+        setAuthError(toFriendlyError(error, 'Sessão inválida.'));
+        setSession(null);
+        setProfile(null);
+        await clearProfileCache();
+      }
+    },
+    [carregarPerfilRemoto, profile?.id],
+  );
+
   const recarregarPerfil = useCallback(async () => {
     if (!session?.user?.id) {
       setProfile(null);
       return null;
     }
-    const proximoPerfil = await carregarPerfil(session.user.id);
+    const proximoPerfil = await carregarPerfilRemoto(session.user.id);
     setProfile(proximoPerfil);
+    await writeProfileCache(proximoPerfil);
     return proximoPerfil;
-  }, [carregarPerfil, session?.user?.id]);
+  }, [carregarPerfilRemoto, session?.user?.id]);
 
-  const signIn = useCallback(async ({ email, password }) => {
-    const { data, error } = await entrarComSenha({ email, password });
-    if (error) {
-      throw new Error(toFriendlyError(error, 'Não foi possível fazer login.'));
-    }
+  const signIn = useCallback(
+    async ({ email, password }) => {
+      const { data, error } = await entrarComSenha({ email, password });
+      if (error) {
+        throw new Error(toFriendlyError(error, 'Não foi possível fazer login.'));
+      }
 
-    const proximaSessao = data?.session ?? null;
-    setSession(proximaSessao);
+      const proximaSessao = data?.session ?? null;
+      setSession(proximaSessao);
 
-    if (!proximaSessao?.user?.id) {
-      throw new Error('Não foi possível validar sua sessão.');
-    }
+      if (!proximaSessao?.user?.id) {
+        throw new Error('Não foi possível validar sua sessão.');
+      }
 
-    const proximoPerfil = await carregarPerfil(proximaSessao.user.id);
-    setProfile(proximoPerfil);
-    setAuthError(null);
-    return proximoPerfil;
-  }, [carregarPerfil]);
+      const proximoPerfil = await carregarPerfilRemoto(proximaSessao.user.id);
+      setProfile(proximoPerfil);
+      await writeProfileCache(proximoPerfil);
+      setAuthError(null);
+      return proximoPerfil;
+    },
+    [carregarPerfilRemoto],
+  );
 
   const signOut = useCallback(async () => {
     await encerrarSessao();
     setSession(null);
     setProfile(null);
+    await clearProfileCache();
   }, []);
 
   useEffect(() => {
-    let mounted = true;
+    mountedRef.current = true;
+    let authChangeTimer = null;
 
     const bootstrap = async () => {
       try {
-        const { data, error } = await obterSessaoAtiva();
+        const { data, error } = await withTimeout(
+          obterSessaoAtiva(),
+          SESSION_TIMEOUT_MS,
+          'Tempo de resposta esgotado ao restaurar sessão.',
+        );
+
         if (error) {
           throw error;
         }
+
         const proximaSessao = data?.session ?? null;
-        if (!mounted) {
+        if (!mountedRef.current) {
           return;
         }
+
         setSession(proximaSessao);
-        if (proximaSessao?.user?.id) {
-          const proximoPerfil = await carregarPerfil(proximaSessao.user.id);
-          if (mounted) {
-            setProfile(proximoPerfil);
-          }
+
+        if (!proximaSessao?.user?.id) {
+          setProfile(null);
+          await clearProfileCache();
+          return;
         }
+
+        const cachedProfile = await readProfileCache();
+        const validCachedProfile = cachedProfile?.id === proximaSessao.user.id ? cachedProfile : null;
+        if (validCachedProfile) {
+          setProfile(validCachedProfile);
+        }
+
+        // Evita deadlock: faz sincronizacao do perfil fora de callback de auth e sem bloquear splash.
+        void sincronizarPerfil({ sessao: proximaSessao, cachedProfile: validCachedProfile });
       } catch (error) {
-        if (mounted) {
+        if (mountedRef.current) {
           setAuthError(toFriendlyError(error, 'Falha ao carregar sessão.'));
           setSession(null);
           setProfile(null);
+          await clearProfileCache();
         }
       } finally {
-        if (mounted) {
+        if (mountedRef.current) {
           setIsLoading(false);
         }
       }
@@ -94,33 +212,41 @@ export function AuthProvider({ children }) {
 
     bootstrap();
 
-    const { data: subscription } = supabase.auth.onAuthStateChange(async (_, proximaSessao) => {
-      if (!mounted) {
+    const { data: subscription } = supabase.auth.onAuthStateChange((_, proximaSessao) => {
+      if (!mountedRef.current) {
         return;
       }
+
       setSession(proximaSessao);
+
       if (!proximaSessao?.user?.id) {
         setProfile(null);
+        void clearProfileCache();
         return;
       }
-      try {
-        const proximoPerfil = await carregarPerfil(proximaSessao.user.id);
-        if (mounted) {
-          setProfile(proximoPerfil);
-        }
-      } catch (error) {
-        if (mounted) {
-          setAuthError(toFriendlyError(error, 'Sessão inválida.'));
-          setProfile(null);
-        }
+
+      if (authChangeTimer) {
+        clearTimeout(authChangeTimer);
       }
+
+      authChangeTimer = setTimeout(async () => {
+        const cachedProfile = await readProfileCache();
+        const validCachedProfile = cachedProfile?.id === proximaSessao.user.id ? cachedProfile : null;
+        if (validCachedProfile && mountedRef.current) {
+          setProfile(validCachedProfile);
+        }
+        void sincronizarPerfil({ sessao: proximaSessao, cachedProfile: validCachedProfile });
+      }, 0);
     });
 
     return () => {
-      mounted = false;
+      mountedRef.current = false;
+      if (authChangeTimer) {
+        clearTimeout(authChangeTimer);
+      }
       subscription?.subscription?.unsubscribe();
     };
-  }, [carregarPerfil]);
+  }, [sincronizarPerfil]);
 
   const value = useMemo(
     () => ({
@@ -137,5 +263,3 @@ export function AuthProvider({ children }) {
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
-
-

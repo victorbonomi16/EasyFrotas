@@ -1,6 +1,13 @@
-﻿import { VEHICLE_STATUS } from '../utils/constants';
+import { VEHICLE_STATUS } from '../utils/constants';
 import { normalizeTagUid } from './Nfc';
 import { supabase } from './supabaseClient';
+
+export function normalizeVehiclePlate(value = '') {
+  return String(value ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
 
 export async function listVehicles({ empresaId, search = '' }) {
   let query = supabase
@@ -14,6 +21,27 @@ export async function listVehicles({ empresaId, search = '' }) {
   }
 
   return query;
+}
+
+export async function findVehicleByPlate({ empresaId, plate }) {
+  const normalizedPlate = normalizeVehiclePlate(plate);
+  if (!normalizedPlate) {
+    return { data: null, error: new Error('Placa inválida.') };
+  }
+
+  const { data, error } = await supabase
+    .from('vehicles')
+    .select('*')
+    .eq('empresa_id', empresaId)
+    .ilike('placa', `%${normalizedPlate}%`)
+    .limit(20);
+
+  if (error) {
+    return { data: null, error };
+  }
+
+  const vehicle = (data ?? []).find((item) => normalizeVehiclePlate(item.placa) === normalizedPlate) ?? null;
+  return { data: vehicle, error: null };
 }
 
 export async function findVehicleByNfcTag({ empresaId, tagUid }) {
@@ -115,5 +143,3 @@ export async function upsertVehicleNfcTag({
 export async function setVehicleNfcTagStatus({ tagId, ativo }) {
   return supabase.from('vehicle_nfc_tags').update({ ativo }).eq('id', tagId);
 }
-
-

@@ -13,7 +13,6 @@ import { TagsVeiculo } from '../screens/gestor/TagsVeiculo';
 import { Veiculos } from '../screens/gestor/Veiculos';
 import { Historico } from '../screens/comum/Historico';
 import { Inicio } from '../screens/comum/Inicio';
-import { FinalizarViagem } from '../screens/utilizador/FinalizarViagem';
 import { ViagemEmAndamento } from '../screens/utilizador/ViagemEmAndamento';
 import { IniciarViagem } from '../screens/utilizador/IniciarViagem';
 import { colors } from '../theme/tokens';
@@ -114,7 +113,6 @@ function NavegadorApp() {
     >
       <Stack.Screen name="AbasPrincipais" component={AbasPorPerfil} options={{ headerShown: false }} />
       <Stack.Screen name="IniciarViagem" component={IniciarViagem} options={{ title: 'Iniciar viagem' }} />
-      <Stack.Screen name="FinalizarViagem" component={FinalizarViagem} options={{ title: 'Encerrar viagem' }} />
       <Stack.Screen name="TagsVeiculo" component={TagsVeiculo} options={{ title: 'Controle de TAG NFC' }} />
     </Stack.Navigator>
   );

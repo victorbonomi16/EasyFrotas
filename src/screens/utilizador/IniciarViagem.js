@@ -12,8 +12,10 @@ import {
 } from 'react-native';
 
 import { Card } from '../../components/ui/Card';
+import { LeitorQuilometragemModal } from '../../components/ui/LeitorQuilometragemModal';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { ScreenContainer } from '../../components/ui/ScreenContainer';
+import { leituraCameraDisponivel } from '../../services/LeituraQuilometragem';
 import { startTrip } from '../../services/Viagens';
 import { colors, radius, shadows, spacing } from '../../theme/tokens';
 import { formatKm, sanitizeNumber } from '../../utils/formatters';
@@ -28,8 +30,11 @@ function formatClock(value) {
 export function IniciarViagem({ route, navigation }) {
   const vehicle = route.params?.vehicle;
   const [kmInicial, setKmInicial] = useState(String(vehicle?.km_atual ?? ''));
+  const [destinoViagem, setDestinoViagem] = useState('');
   const [observacaoInicio, setObservacaoInicio] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLeitorKmVisible, setIsLeitorKmVisible] = useState(false);
+  const cameraReaderEnabled = leituraCameraDisponivel();
 
   const currentTimeLabel = useMemo(() => formatClock(new Date().toISOString()), []);
 
@@ -50,18 +55,28 @@ export function IniciarViagem({ route, navigation }) {
       Alert.alert('KM inválido', 'Informe uma quilometragem inicial válida.');
       return;
     }
+    const kmAtualVeiculo = Number(vehicle?.km_atual ?? 0);
+    if (Number.isFinite(kmAtualVeiculo) && parsedKm < kmAtualVeiculo) {
+      Alert.alert('KM inválido', `O KM inicial deve ser maior ou igual a ${formatKm(kmAtualVeiculo)}.`);
+      return;
+    }
+    const destino = destinoViagem.trim();
+    if (!destino) {
+      Alert.alert('Destino obrigatório', 'Informe o destino da viagem para continuar.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
       const { error } = await startTrip({
         vehicleId: vehicle.id,
         kmInicial: parsedKm,
+        destino,
         observacaoInicio: observacaoInicio.trim(),
       });
       if (error) {
         throw error;
       }
-      Alert.alert('Viagem iniciada', 'Seu registro foi salvo com sucesso.');
       navigation.navigate('AbasPrincipais', { screen: 'ViagemAtual' });
     } catch (error) {
       Alert.alert('Falha ao iniciar viagem', error.message);
@@ -135,6 +150,26 @@ export function IniciarViagem({ route, navigation }) {
           />
           <Text style={styles.kmSuffix}>km</Text>
         </View>
+        {cameraReaderEnabled ? (
+          <View style={styles.kmActionRow}>
+            <PrimaryButton
+              title="Ler painel com câmera"
+              variant="ghost"
+              onPress={() => setIsLeitorKmVisible(true)}
+              style={styles.kmActionButton}
+            />
+          </View>
+        ) : (
+          <Text style={styles.kmActionUnavailable}>Leitura por câmera disponível na APK.</Text>
+        )}
+        <Text style={[styles.fieldLabel, styles.destinationLabel]}>Destino da viagem *</Text>
+        <TextInput
+          value={destinoViagem}
+          onChangeText={setDestinoViagem}
+          placeholder="Ex: Filial Criciúma / Visita técnica / Reunião externa"
+          placeholderTextColor={colors.textMuted}
+          style={styles.destinationInput}
+        />
         <Text style={[styles.fieldLabel, styles.obsLabel]}>Observação (Opcional)</Text>
         <TextInput
           value={observacaoInicio}
@@ -168,6 +203,17 @@ export function IniciarViagem({ route, navigation }) {
           </View>
         )}
       </Pressable>
+
+      {cameraReaderEnabled ? (
+        <LeitorQuilometragemModal
+          visible={isLeitorKmVisible}
+          onClose={() => setIsLeitorKmVisible(false)}
+          onConfirmKm={(valor) => setKmInicial(String(valor))}
+          minKm={Number(vehicle?.km_atual ?? 0)}
+          titulo="Leitura do KM inicial"
+          subtitulo="Posicione o odômetro na moldura para preencher o KM de início."
+        />
+      ) : null}
     </ScreenContainer>
   );
 }
@@ -305,11 +351,11 @@ const styles = StyleSheet.create({
   },
   fieldLabel: {
     color: '#353C48',
-    fontSize: 17 / 1.05,
+    fontSize: 16,
     fontWeight: '800',
   },
   kmInputShell: {
-    minHeight: 54,
+    minHeight: 50,
     borderWidth: 1,
     borderColor: '#CDD5E1',
     borderRadius: radius.md,
@@ -322,27 +368,53 @@ const styles = StyleSheet.create({
   kmInput: {
     flex: 1,
     color: colors.primaryDark,
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '700',
     paddingVertical: 0,
   },
   kmSuffix: {
     color: '#2D3441',
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '500',
-    marginTop: 2,
+    marginTop: 1,
   },
   obsLabel: {
     marginTop: spacing.xs,
   },
+  destinationLabel: {
+    marginTop: spacing.xs,
+  },
+  kmActionRow: {
+    marginTop: spacing.xxs,
+  },
+  kmActionButton: {
+    minHeight: 44,
+  },
+  kmActionUnavailable: {
+    marginTop: spacing.xxs,
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  destinationInput: {
+    minHeight: 50,
+    borderWidth: 1,
+    borderColor: '#CDD5E1',
+    borderRadius: radius.md,
+    backgroundColor: '#FAFCFF',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 0,
+    fontSize: 16,
+    color: '#1F2937',
+  },
   obsInput: {
-    minHeight: 118,
+    minHeight: 110,
     borderWidth: 1,
     borderColor: '#CDD5E1',
     borderRadius: radius.md,
     backgroundColor: '#FAFCFF',
     padding: spacing.md,
-    fontSize: 17 / 1.05,
+    fontSize: 16,
     color: '#1F2937',
     textAlignVertical: 'top',
   },
