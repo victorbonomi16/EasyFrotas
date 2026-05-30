@@ -369,7 +369,7 @@ export function ViagemEmAndamento({ navigation }) {
 
   if (!openTrip) {
     return (
-      <ScreenContainer contentStyle={styles.container} safeEdges={['top', 'left', 'right', 'bottom']}>
+      <ScreenContainer contentStyle={styles.container} safeEdges={['top', 'left', 'right', 'bottom']} scroll={false}>
         <NfcPromptModal
           visible={isScanningNfc}
           title="Escaneando TAG NFC"
@@ -765,7 +765,7 @@ export function ViagemEmAndamento({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: spacing.xs,
+    padding: spacing.md,
     gap: spacing.md,
   },
   tripStatusCard: {
