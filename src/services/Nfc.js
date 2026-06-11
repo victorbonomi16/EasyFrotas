@@ -13,13 +13,29 @@ export function normalizeTagUid(value = '') {
     .toUpperCase();
 }
 
-function buildVehicleTagPayload(vehicle) {
-  return JSON.stringify({
-    app: 'easyfrotas',
-    vehicle_id: vehicle.id,
-    placa: vehicle.placa,
-    created_at: new Date().toISOString(),
-  });
+export function normalizeTagPayloadCode(value = '') {
+  return toSafeString(value)
+    .replace(/[^a-fA-F0-9]/g, '')
+    .toUpperCase();
+}
+
+function generateRandomHex(size = 16) {
+  const bytes = new Uint8Array(size);
+  const cryptoApi = globalThis.crypto;
+
+  if (cryptoApi?.getRandomValues) {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+function buildOpaqueTagPayload() {
+  return generateRandomHex(16);
 }
 
 function extractTextPayloadFromTag(tag) {
@@ -55,7 +71,7 @@ async function ensureNfcReady() {
   } catch (error) {
     const message = toSafeString(error?.message).toLowerCase();
     if (message.includes('native module') || message.includes('null') || message.includes('not available')) {
-      throw new Error('NFC indisponível neste build. Gere um build nativo (expo run/eas build) para usar TAGs NFC.');
+      throw new Error('NFC indisponível neste dispositivo.');
     }
     throw error;
   }
@@ -112,7 +128,7 @@ export async function writeVehicleTag({ vehicle }) {
   }
 
   await ensureNfcReady();
-  const payload = buildVehicleTagPayload(vehicle);
+  const payload = buildOpaqueTagPayload();
 
   try {
     await NfcManager.requestTechnology(NfcTech.Ndef, {

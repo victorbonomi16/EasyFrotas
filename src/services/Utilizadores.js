@@ -50,7 +50,7 @@ async function chamarFuncaoUtilizadorGerido({ method, token, payload }) {
     });
   } catch (error) {
     if (error?.name === 'AbortError') {
-      throw new Error('Tempo limite excedido ao processar usuário. Verifique rede e status da Edge Function.');
+      throw new Error('Tempo limite excedido ao processar usuário. Verifique sua conexão e tente novamente.');
     }
     throw error;
   } finally {
@@ -72,7 +72,7 @@ async function parseSafeJson(response) {
 
 function normalizarErroUtilizadorGerido({ response, body, mode }) {
   if (response.status === 404) {
-    return 'Edge Function create-user-by-manager não encontrada (404). Faça o deploy da função no Supabase.';
+    return 'Serviço de usuários temporariamente indisponível. Tente novamente em instantes.';
   }
   if (response.status === 401) {
     return `Sessão inválida para ${mode} usuário. Faça login novamente.`;
@@ -81,7 +81,7 @@ function normalizarErroUtilizadorGerido({ response, body, mode }) {
     return body?.error ?? 'Apenas gestor ativo pode gerenciar usuários.';
   }
 
-  const fallback = `Falha ao ${mode} usuário (HTTP ${response.status}).`;
+  const fallback = `Não foi possível ${mode} usuário. Tente novamente.`;
   return body?.error ?? body?.message ?? body?.raw ?? fallback;
 }
 
@@ -100,7 +100,7 @@ async function executarRequisicaoUtilizadorGerido({ method, accessToken, payload
   let response = await withTimeout(
     chamarFuncaoUtilizadorGerido({ method, token, payload }),
     CREATE_OR_UPDATE_TIMEOUT_MS + 1000,
-    `Tempo limite ao ${mode} usuário. Verifique conectividade e logs da Edge Function.`,
+    `Tempo limite ao ${mode} usuário. Verifique sua conexão e tente novamente.`,
   );
 
   if (response.status === 401) {

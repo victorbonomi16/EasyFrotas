@@ -22,7 +22,7 @@ export async function checkSupabaseReachability(timeoutMs = 8000) {
     return {
       ok: false,
       status: 0,
-      errorMessage: error?.message ?? 'Falha de rede ao conectar no Supabase.',
+      errorMessage: error?.message ?? 'Falha de rede ao conectar ao servidor.',
     };
   } finally {
     clearTimeout(timeoutId);

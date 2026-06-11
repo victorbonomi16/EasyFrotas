@@ -33,8 +33,8 @@ export function Login() {
   const onSubmit = async (form) => {
     if (!isConfigValid) {
       Alert.alert(
-        'Configuração pendente',
-        'Preencha EXPO_PUBLIC_SUPABASE_URL e EXPO_PUBLIC_SUPABASE_ANON_KEY no arquivo .env e reinicie o Expo.',
+        'Serviço indisponível',
+        'Não foi possível iniciar o aplicativo. Tente novamente mais tarde.',
       );
       return;
     }
@@ -42,8 +42,8 @@ export function Login() {
     const connection = await checkSupabaseReachability();
     if (!connection.ok) {
       Alert.alert(
-        'Sem conexão com Supabase',
-        'Não foi possível alcançar o servidor. Verifique internet do emulador/celular, VPN/proxy e se o projeto Supabase está ativo.',
+        'Sem conexão',
+        'Não foi possível conectar ao servidor. Verifique sua internet e tente novamente.',
       );
       return;
     }
@@ -98,7 +98,7 @@ export function Login() {
 
         {!isConfigValid ? (
           <Text style={styles.warning}>
-            Configure `EXPO_PUBLIC_SUPABASE_URL` e `EXPO_PUBLIC_SUPABASE_ANON_KEY` para autenticar.
+            Serviço temporariamente indisponível.
           </Text>
         ) : null}
 

@@ -141,7 +141,7 @@ export function Utilizadores() {
     setCriando(true);
     const creatingGuard = setTimeout(() => {
       setCriando(false);
-      Alert.alert('Operação interrompida', 'A requisição demorou demais. Verifique o deploy da Edge Function.');
+      Alert.alert('Operação interrompida', 'A requisição demorou demais. Verifique sua conexão e tente novamente.');
     }, 25000);
 
     try {
@@ -330,7 +330,7 @@ export function Utilizadores() {
       <FloatingCardModal visible={modalCriacaoVisivel} onRequestClose={fecharModalCriacao}>
         <Card style={styles.formCard}>
           <Text style={styles.formTitle}>Novo usuário</Text>
-          <Text style={styles.formSubtitle}>Cadastro somente como Usuário.</Text>
+          <Text style={styles.formSubtitle}>Cadastro de um novo utilizador.</Text>
 
           <TextField
             label="Nome"
@@ -512,4 +512,3 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
-

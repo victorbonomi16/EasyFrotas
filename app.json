@@ -4,7 +4,7 @@
     "slug": "easyfrotas",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icon-app.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -17,7 +17,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/icon-app.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -48,12 +48,7 @@
           "photosPermission": "Permita acesso à galeria para enviar a foto do veículo."
         }
       ],
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Permita acesso a camera para leitura automatica da quilometragem."
-        }
-      ]
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "supabaseUrl": "https://SEU-PROJETO.supabase.co",

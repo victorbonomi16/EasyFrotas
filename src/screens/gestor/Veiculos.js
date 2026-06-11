@@ -2,7 +2,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { Badge, statusToneMap } from '../../components/ui/Badge';
 import { Card } from '../../components/ui/Card';
@@ -31,9 +31,22 @@ const baseForm = {
   status: VEHICLE_STATUS.DISPONIVEL,
 };
 
+const EDITABLE_VEHICLE_STATUS = [VEHICLE_STATUS.DISPONIVEL, VEHICLE_STATUS.MANUTENCAO];
+
+function sanitizeVehiclePlateInput(value) {
+  return String(value ?? '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+function sanitizeNumericInput(value, maxLength) {
+  return String(value ?? '').replace(/\D/g, '').slice(0, maxLength);
+}
+
 export function Veiculos() {
   const navigation = useNavigation();
   const { profile } = useAuth();
+  const { height: windowHeight } = useWindowDimensions();
+  const formModalMaxHeight = Math.max(520, windowHeight * 0.9);
+  const formScrollMaxHeight = Math.min(620, Math.max(360, windowHeight * 0.62));
   const [vehicles, setVehicles] = useState([]);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -84,6 +97,11 @@ export function Veiculos() {
   };
 
   const openEditModal = (vehicle) => {
+    if (vehicle.status === VEHICLE_STATUS.INATIVO) {
+      Alert.alert('Veículo inativo', 'Reative o veículo antes de editar as informações cadastrais.');
+      return;
+    }
+
     setForm({
       ...vehicle,
       foto_url: vehicle.foto_url ?? '',
@@ -186,8 +204,28 @@ export function Veiculos() {
   };
 
   const onSave = async () => {
-    if (!form.placa.trim() || !form.modelo.trim()) {
+    const normalizedPlate = sanitizeVehiclePlateInput(form.placa);
+    const kmAtual = sanitizeNumber(form.km_atual);
+    const anoVeiculo = form.ano ? Number(form.ano) : null;
+
+    if (!normalizedPlate || !form.modelo.trim()) {
       Alert.alert('Campos obrigatórios', 'Informe ao menos placa e modelo.');
+      return;
+    }
+    if (normalizedPlate.length !== 7) {
+      Alert.alert('Placa inválida', 'A placa deve conter exatamente 7 letras ou números.');
+      return;
+    }
+    if (form.ano && (!Number.isInteger(anoVeiculo) || String(form.ano).length !== 4)) {
+      Alert.alert('Ano inválido', 'Informe o ano com 4 dígitos.');
+      return;
+    }
+    if (kmAtual < 0) {
+      Alert.alert('Quilometragem inválida', 'A quilometragem não pode ser negativa.');
+      return;
+    }
+    if (form.id && form.status === VEHICLE_STATUS.INATIVO) {
+      Alert.alert('Status inválido', 'Use a opção de inativar no card do veículo para alterar esse status.');
       return;
     }
     if (!profile?.empresa_id) {
@@ -199,13 +237,13 @@ export function Veiculos() {
     try {
       const payload = {
         ...form,
-        placa: form.placa.trim().toUpperCase(),
+        placa: normalizedPlate,
         modelo: form.modelo.trim(),
         marca: form.marca.trim() || null,
         cor: form.cor.trim() || null,
         foto_url: form.foto_url?.trim() || null,
-        km_atual: sanitizeNumber(form.km_atual),
-        ano: form.ano ? Number(form.ano) : null,
+        km_atual: kmAtual,
+        ano: anoVeiculo,
         status: form.id ? form.status : VEHICLE_STATUS.DISPONIVEL,
         empresa_id: profile.empresa_id,
       };
@@ -229,6 +267,14 @@ export function Veiculos() {
     const willInactivate = vehicle.status !== VEHICLE_STATUS.INATIVO;
     const nextStatus = willInactivate ? VEHICLE_STATUS.INATIVO : VEHICLE_STATUS.DISPONIVEL;
     const actionLabel = willInactivate ? 'inativar' : 'reativar';
+
+    if (willInactivate && vehicle.status === VEHICLE_STATUS.EM_USO) {
+      Alert.alert(
+        'Veículo em uso',
+        'Não é possível inativar um veículo com viagem em andamento. Finalize a viagem antes de inativar.',
+      );
+      return;
+    }
 
     Alert.alert(
       willInactivate ? 'Inativar veículo' : 'Reativar veículo',
@@ -261,6 +307,21 @@ export function Veiculos() {
     };
   }, [vehicles]);
 
+  const sortedVehicles = useMemo(
+    () =>
+      [...vehicles].sort((first, second) => {
+        const firstInactive = first.status === VEHICLE_STATUS.INATIVO;
+        const secondInactive = second.status === VEHICLE_STATUS.INATIVO;
+
+        if (firstInactive === secondInactive) {
+          return 0;
+        }
+
+        return firstInactive ? 1 : -1;
+      }),
+    [vehicles],
+  );
+
   return (
     <ScreenContainer>
       <ManagementHeaderCard
@@ -283,9 +344,28 @@ export function Veiculos() {
       {vehicles.length === 0 ? (
         <EmptyState title="Nenhum veículo cadastrado" subtitle="Cadastre o primeiro veículo para iniciar o controle da frota." />
       ) : (
-        vehicles.map((vehicle) => (
-          <Card key={vehicle.id} style={styles.vehicleCard}>
-            <VehicleImage sourceUrl={vehicle.foto_url} />
+        sortedVehicles.map((vehicle) => (
+          <Card
+            key={vehicle.id}
+            style={[
+              styles.vehicleCard,
+              vehicle.status === VEHICLE_STATUS.INATIVO ? styles.vehicleCardInactive : null,
+            ]}
+          >
+            <View style={styles.vehicleImageArea}>
+              <VehicleImage sourceUrl={vehicle.foto_url} />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Editar veículo ${vehicle.placa}`}
+                onPress={() => openEditModal(vehicle)}
+                style={({ pressed }) => [
+                  styles.editImageButton,
+                  pressed ? styles.editImageButtonPressed : null,
+                ]}
+              >
+                <Ionicons name="pencil-outline" size={17} color={colors.text} />
+              </Pressable>
+            </View>
 
             <View style={styles.vehicleHeader}>
               <View style={{ flex: 1 }}>
@@ -303,81 +383,129 @@ export function Veiculos() {
             </View>
 
             <View style={styles.actionsRow}>
-              <PrimaryButton title="Editar" variant="ghost" onPress={() => openEditModal(vehicle)} style={styles.flexButton} />
+              <PrimaryButton
+                title={vehicle.status === VEHICLE_STATUS.INATIVO ? 'REATIVAR' : 'INATIVAR'}
+                variant={vehicle.status === VEHICLE_STATUS.INATIVO ? 'outline' : 'primary'}
+                onPress={() => onToggleVehicleStatus(vehicle)}
+                style={styles.flexButton}
+              />
               <PrimaryButton
                 title="TAG NFC"
-                variant="outline"
+                variant="primary"
                 onPress={() => navigation.navigate('TagsVeiculo', { vehicle })}
                 style={styles.flexButton}
               />
             </View>
-            <PrimaryButton
-              title={vehicle.status === VEHICLE_STATUS.INATIVO ? 'Reativar veículo' : 'Inativar veículo'}
-              variant={vehicle.status === VEHICLE_STATUS.INATIVO ? 'primary' : 'outline'}
-              onPress={() => onToggleVehicleStatus(vehicle)}
-            />
           </Card>
         ))
       )}
 
       <FloatingCardModal visible={modalVisible} onRequestClose={closeModal}>
-        <Card style={styles.formCard}>
+        <Card style={[styles.formCard, { maxHeight: formModalMaxHeight }]}>
           <Text style={styles.formTitle}>{form.id ? 'Editar veículo' : 'Novo veículo'}</Text>
           <Text style={styles.formSubtitle}>Inclua foto oficial para identificação rápida no pátio.</Text>
 
-          <TextField label="Placa" value={form.placa} onChangeText={(value) => setForm((old) => ({ ...old, placa: value }))} />
-          <TextField label="Modelo" value={form.modelo} onChangeText={(value) => setForm((old) => ({ ...old, modelo: value }))} />
-          <TextField label="Marca" value={form.marca} onChangeText={(value) => setForm((old) => ({ ...old, marca: value }))} />
-          <TextField label="Ano" value={form.ano} keyboardType="numeric" onChangeText={(value) => setForm((old) => ({ ...old, ano: value }))} />
-          <TextField label="Cor" value={form.cor} onChangeText={(value) => setForm((old) => ({ ...old, cor: value }))} />
-          <TextField
-            label="Quilometragem atual"
-            value={String(form.km_atual)}
-            keyboardType="numeric"
-            onChangeText={(value) => setForm((old) => ({ ...old, km_atual: value }))}
-          />
-
-          <Text style={styles.sectionTitle}>Foto do veículo</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={onPhotoPress}
-            disabled={isPickingPhoto || isUploadingPhoto}
-            style={({ pressed }) => [
-              styles.photoTouchable,
-              pressed ? styles.photoTouchablePressed : null,
-            ]}
+          <ScrollView
+            style={[styles.formScroll, { maxHeight: formScrollMaxHeight }]}
+            contentContainerStyle={styles.formScrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           >
-            <VehicleImage sourceUrl={form.foto_url} compact />
-            {form.foto_url && showPhotoRemoveAction ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={(event) => { event.stopPropagation?.(); clearPhoto(); }}
-                style={({ pressed }) => [
-                  styles.photoRemoveBadge,
-                  pressed ? styles.photoRemoveBadgePressed : null,
-                ]}
-              >
-                <Ionicons name="trash-outline" size={16} color="#FFFFFF" />
-              </Pressable>
-            ) : null}
-          </Pressable>
+            <TextField
+              label="Marca"
+              value={form.marca}
+              onChangeText={(value) => setForm((old) => ({ ...old, marca: value }))}
+              maxLength={32}
+            />
+            <TextField
+              label="Modelo"
+              value={form.modelo}
+              onChangeText={(value) => setForm((old) => ({ ...old, modelo: value }))}
+              maxLength={48}
+            />
 
-          {form.id ? (
-            <>
-              <Text style={styles.sectionTitle}>Status do veículo</Text>
-              <View style={styles.statusRow}>
-                {Object.values(VEHICLE_STATUS).map((status) => (
-                  <PrimaryButton
-                    key={status}
-                    title={labels.vehicleStatus[status]}
-                    variant={form.status === status ? 'primary' : 'ghost'}
-                    onPress={() => setForm((old) => ({ ...old, status }))}
-                    style={styles.statusButton}
-                  />
-                ))}
+            <View style={styles.formFieldRow}>
+              <View style={styles.formFieldSmall}>
+                <TextField
+                  label="Ano"
+                  value={form.ano}
+                  keyboardType="numeric"
+                  onChangeText={(value) => setForm((old) => ({ ...old, ano: sanitizeNumericInput(value, 4) }))}
+                  maxLength={4}
+                />
               </View>
-            </>
-          ) : null}
+              <View style={styles.formFieldLarge}>
+                <TextField
+                  label="Cor"
+                  value={form.cor}
+                  onChangeText={(value) => setForm((old) => ({ ...old, cor: value }))}
+                  maxLength={24}
+                />
+              </View>
+            </View>
+
+            <View style={styles.formFieldRow}>
+              <View style={styles.formFieldLarge}>
+                <TextField
+                  label="Placa"
+                  value={form.placa}
+                  onChangeText={(value) => setForm((old) => ({ ...old, placa: sanitizeVehiclePlateInput(value) }))}
+                  maxLength={7}
+                />
+              </View>
+              <View style={styles.formFieldLarge}>
+                <TextField
+                  label="Quilometragem atual"
+                  value={String(form.km_atual)}
+                  keyboardType="numeric"
+                  onChangeText={(value) => setForm((old) => ({ ...old, km_atual: sanitizeNumericInput(value, 6) }))}
+                  maxLength={6}
+                />
+              </View>
+            </View>
+
+            <Text style={styles.sectionTitle}>Foto do veículo</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onPhotoPress}
+              disabled={isPickingPhoto || isUploadingPhoto}
+              style={({ pressed }) => [
+                styles.photoTouchable,
+                pressed ? styles.photoTouchablePressed : null,
+              ]}
+            >
+              <VehicleImage sourceUrl={form.foto_url} compact />
+              {form.foto_url && showPhotoRemoveAction ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={(event) => { event.stopPropagation?.(); clearPhoto(); }}
+                  style={({ pressed }) => [
+                    styles.photoRemoveBadge,
+                    pressed ? styles.photoRemoveBadgePressed : null,
+                  ]}
+                >
+                  <Ionicons name="trash-outline" size={16} color="#FFFFFF" />
+                </Pressable>
+              ) : null}
+            </Pressable>
+
+            {form.id ? (
+              <>
+                <Text style={styles.sectionTitle}>Status do veículo</Text>
+                <View style={styles.statusRow}>
+                  {EDITABLE_VEHICLE_STATUS.map((status) => (
+                    <PrimaryButton
+                      key={status}
+                      title={labels.vehicleStatus[status]}
+                      variant={form.status === status ? 'primary' : 'ghost'}
+                      onPress={() => setForm((old) => ({ ...old, status }))}
+                      style={styles.statusButton}
+                    />
+                  ))}
+                </View>
+              </>
+            ) : null}
+          </ScrollView>
 
           <View style={styles.formActionsRow}>
             <PrimaryButton title="Cancelar" variant="outline" onPress={closeModal} style={styles.flexButton} />
@@ -430,6 +558,11 @@ const styles = StyleSheet.create({
     borderColor: '#DEE6F1',
     ...shadows.medium,
   },
+  vehicleCardInactive: {
+    opacity: 0.72,
+    backgroundColor: '#F1F5F9',
+    borderColor: '#CBD5E1',
+  },
   imageWrap: {
     height: 176,
     borderRadius: radius.lg,
@@ -442,6 +575,31 @@ const styles = StyleSheet.create({
   },
   imageWrapCompact: {
     height: 148,
+  },
+  vehicleImageArea: {
+    position: 'relative',
+  },
+  editImageButton: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(203, 213, 225, 0.9)',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  editImageButtonPressed: {
+    opacity: 0.86,
+    transform: [{ scale: 0.97 }],
   },
   photoTouchable: {
     position: 'relative',
@@ -530,10 +688,25 @@ const styles = StyleSheet.create({
   formActionsRow: {
     flexDirection: 'row',
     gap: spacing.xs,
-    marginTop: spacing.md,
+    paddingTop: spacing.sm,
   },
   formCard: {
     gap: spacing.xs,
+  },
+  formScroll: {},
+  formScrollContent: {
+    gap: spacing.xs,
+    paddingBottom: spacing.md,
+  },
+  formFieldRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  formFieldLarge: {
+    flex: 1,
+  },
+  formFieldSmall: {
+    flex: 0.72,
   },
   formTitle: {
     color: colors.primaryDark,

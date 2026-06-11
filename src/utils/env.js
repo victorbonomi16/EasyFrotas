@@ -4,9 +4,9 @@ const expoConfig = Constants.expoConfig ?? {};
 const extra = expoConfig.extra ?? {};
 
 export const SUPABASE_URL =
-  process.env.EXPO_PUBLIC_SUPABASE_URL ?? extra.supabaseUrl ?? 'https://example.supabase.co';
+  process.env.EXPO_PUBLIC_SUPABASE_URL ?? extra.supabaseUrl ?? '';
 export const SUPABASE_ANON_KEY =
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? extra.supabaseAnonKey ?? 'PUBLIC_ANON_KEY';
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? extra.supabaseAnonKey ?? '';
 
 const PLACEHOLDER_MARKERS = ['SEU-PROJETO', 'SUA_CHAVE_ANON_PUBLICA', 'example.supabase.co', 'PUBLIC_ANON_KEY'];
 

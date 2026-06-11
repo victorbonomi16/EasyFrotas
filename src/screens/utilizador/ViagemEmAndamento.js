@@ -5,16 +5,14 @@ import { ActivityIndicator, Alert, Animated, Image, Pressable, StyleSheet, Text,
 
 import { Card } from '../../components/ui/Card';
 import { FloatingCardModal } from '../../components/ui/FloatingCardModal';
-import { LeitorQuilometragemModal } from '../../components/ui/LeitorQuilometragemModal';
 import { NfcPromptModal } from '../../components/ui/NfcPromptModal';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { ScreenContainer } from '../../components/ui/ScreenContainer';
 import { TextField } from '../../components/ui/TextField';
 import { useAuth } from '../../context/useAuth';
-import { leituraCameraDisponivel } from '../../services/LeituraQuilometragem';
 import { cancelNfcOperation, isNfcCancelError, scanNfcTag } from '../../services/Nfc';
 import { finishTrip, obterViagemAbertaPorUtilizador } from '../../services/Viagens';
-import { findVehicleById, findVehicleByNfcTag, findVehicleByPlate, normalizeVehiclePlate } from '../../services/Veiculos';
+import { findVehicleByNfcTag, findVehicleByPlate, normalizeVehiclePlate } from '../../services/Veiculos';
 import { colors, radius, shadows, spacing } from '../../theme/tokens';
 import { labels, OCCURRENCE_TYPES, VEHICLE_STATUS } from '../../utils/constants';
 import { formatKm, sanitizeNumber } from '../../utils/formatters';
@@ -48,28 +46,6 @@ function formatStartHour(value) {
   });
 }
 
-function extractVehicleIdFromPayload(payload) {
-  const text = String(payload ?? '').trim();
-  if (!text) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed?.vehicle_id) {
-      return String(parsed.vehicle_id);
-    }
-  } catch (error) {
-    // Mantém fallback textual simples abaixo.
-  }
-
-  if (text.startsWith('easyfrotas:')) {
-    return text.replace('easyfrotas:', '').trim() || null;
-  }
-
-  return null;
-}
-
 const FINISH_STEP = {
   CONFIRM: 'confirm',
   KM: 'km',
@@ -87,7 +63,6 @@ export function ViagemEmAndamento({ navigation }) {
     NFC: 'nfc',
     MANUAL: 'manual',
   };
-  const cameraReaderEnabled = leituraCameraDisponivel();
   const { profile } = useAuth();
   const [openTrip, setOpenTrip] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -101,7 +76,6 @@ export function ViagemEmAndamento({ navigation }) {
   const [occurrenceType, setOccurrenceType] = useState(null);
   const [occurrenceDescription, setOccurrenceDescription] = useState('');
   const [isFinishingTrip, setIsFinishingTrip] = useState(false);
-  const [isLeitorKmFinalVisible, setIsLeitorKmFinalVisible] = useState(false);
   const finishStepAnim = useRef(new Animated.Value(0)).current;
 
   const loadOpenTrip = useCallback(async () => {
@@ -181,19 +155,8 @@ export function ViagemEmAndamento({ navigation }) {
       let { data: vehicle, error } = await findVehicleByNfcTag({
         empresaId: profile.empresa_id,
         tagUid,
+        tagPayload: ndefTextPayload,
       });
-
-      if ((!vehicle || error) && ndefTextPayload) {
-        const payloadVehicleId = extractVehicleIdFromPayload(ndefTextPayload);
-        if (payloadVehicleId) {
-          const fallbackResult = await findVehicleById({
-            empresaId: profile.empresa_id,
-            vehicleId: payloadVehicleId,
-          });
-          vehicle = fallbackResult.data ?? vehicle;
-          error = fallbackResult.error ?? error;
-        }
-      }
 
       if (error) {
         throw error;
@@ -279,7 +242,6 @@ export function ViagemEmAndamento({ navigation }) {
     if (!openTrip || isLoading) {
       return;
     }
-    setIsLeitorKmFinalVisible(false);
     setKmFinal(String(openTrip.km_inicial ?? ''));
     setOccurrenceType(null);
     setOccurrenceDescription('');
@@ -290,7 +252,6 @@ export function ViagemEmAndamento({ navigation }) {
     if (isFinishingTrip) {
       return;
     }
-    setIsLeitorKmFinalVisible(false);
     setFinishStep(null);
   }, [isFinishingTrip]);
 
@@ -330,7 +291,6 @@ export function ViagemEmAndamento({ navigation }) {
         throw error;
       }
 
-      setIsLeitorKmFinalVisible(false);
       setFinishStep(null);
       await loadOpenTrip();
       navigation.navigate('AbasPrincipais', { screen: 'Historico' });
@@ -620,18 +580,6 @@ export function ViagemEmAndamento({ navigation }) {
                       style={styles.finishFlowKmInput}
                     />
                   </View>
-                  {cameraReaderEnabled ? (
-                    <PrimaryButton
-                      title="Ler KM com câmera"
-                      variant="ghost"
-                      onPress={() => setIsLeitorKmFinalVisible(true)}
-                      style={styles.finishFlowKmCameraButton}
-                    />
-                  ) : (
-                    <Text style={styles.finishFlowCameraUnavailable}>
-                      Leitura por câmera disponível na APK.
-                    </Text>
-                  )}
                 </View>
               </View>
             ) : null}
@@ -748,16 +696,6 @@ export function ViagemEmAndamento({ navigation }) {
         </Animated.View>
       </FloatingCardModal>
 
-      {cameraReaderEnabled ? (
-        <LeitorQuilometragemModal
-          visible={isLeitorKmFinalVisible}
-          onClose={() => setIsLeitorKmFinalVisible(false)}
-          onConfirmKm={(valor) => setKmFinal(String(valor))}
-          minKm={Number(openTrip?.km_inicial ?? 0)}
-          titulo="Leitura do KM final"
-          subtitulo="Posicione o odômetro na moldura para validar o encerramento da viagem."
-        />
-      ) : null}
     </ScreenContainer>
   );
 }
@@ -1084,17 +1022,6 @@ const styles = StyleSheet.create({
     color: colors.primaryDark,
     fontSize: 18,
     fontWeight: '700',
-  },
-  finishFlowKmCameraButton: {
-    minHeight: 42,
-    marginTop: spacing.xxs,
-  },
-  finishFlowCameraUnavailable: {
-    marginTop: spacing.xxs,
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: '500',
-    textAlign: 'left',
   },
   finishFlowOccurrencePills: {
     flexDirection: 'row',

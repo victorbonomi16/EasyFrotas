@@ -1,6 +1,6 @@
 ﻿import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '../../components/ui/Card';
@@ -13,7 +13,7 @@ import { getFleetSummary } from '../../services/Relatorios';
 import { listTrips, obterViagemAbertaPorUtilizador } from '../../services/Viagens';
 import { colors, radius, shadows, spacing } from '../../theme/tokens';
 import { labels } from '../../utils/constants';
-import { formatDateTime, formatKm } from '../../utils/formatters';
+import { formatKm } from '../../utils/formatters';
 
 const PERIODS = [7, 30, 90];
 
@@ -52,6 +52,47 @@ function buildUserSummary(trips = []) {
   };
 }
 
+function formatElapsedTime(startedAt, nowMs) {
+  if (!startedAt) {
+    return '00:00:00';
+  }
+
+  const startedMs = new Date(startedAt).getTime();
+  if (Number.isNaN(startedMs)) {
+    return '00:00:00';
+  }
+
+  const totalSeconds = Math.max(0, Math.floor((nowMs - startedMs) / 1000));
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function formatTripDate(value) {
+  if (!value) {
+    return '-';
+  }
+
+  return new Date(value).toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function formatTripHour(value) {
+  if (!value) {
+    return '-';
+  }
+
+  return new Date(value).toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export function Inicio() {
   const navigation = useNavigation();
   const { profile, signOut } = useAuth();
@@ -65,6 +106,7 @@ export function Inicio() {
   });
   const [periodDays, setPeriodDays] = useState(30);
   const [loading, setLoading] = useState(false);
+  const [nowMs, setNowMs] = useState(Date.now());
 
   const loadData = useCallback(async () => {
     if (!profile) {
@@ -120,11 +162,27 @@ export function Inicio() {
     }, [loadData]),
   );
 
+  useEffect(() => {
+    if (!openTrip?.started_at) {
+      return undefined;
+    }
+
+    const timerId = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => clearInterval(timerId);
+  }, [openTrip?.started_at]);
+
+  const isGestor = profile?.perfil === 'gestor';
+  const elapsedLabel = useMemo(
+    () => formatElapsedTime(openTrip?.started_at, nowMs),
+    [nowMs, openTrip?.started_at],
+  );
+
   if (!profile) {
     return null;
   }
-
-  const isGestor = profile.perfil === 'gestor';
 
   return (
     <ScreenContainer onRefresh={loadData} refreshing={loading}>
@@ -242,30 +300,29 @@ export function Inicio() {
             onSignOut={signOut}
           />
 
-          <Card style={styles.card}>
-            <Text style={styles.cardTitle}>Status da sua viagem</Text>
-            {openTrip ? (
-              <View style={styles.tripInfo}>
-                <Text style={styles.infoLabel}>Veículo</Text>
-                <Text style={styles.infoValue}>
-                  {openTrip.vehicles?.placa} • {openTrip.vehicles?.modelo}
-                </Text>
-                <Text style={styles.infoLabel}>Início</Text>
-                <Text style={styles.infoValue}>{formatDateTime(openTrip.started_at)}</Text>
-                <Text style={styles.infoLabel}>KM inicial</Text>
-                <Text style={styles.infoValue}>{formatKm(openTrip.km_inicial)}</Text>
-                <PrimaryButton
-                  title="Finalizar viagem"
-                  onPress={() => navigation.navigate('ViagemAtual')}
-                />
+          {openTrip ? (
+            <>
+              <View style={styles.activeTripExternalHeader}>
+                <Text style={styles.activeTripExternalEyebrow}>Operacional</Text>
+                <Text style={styles.gestorSectionSubtitle}>Viagem Atual</Text>
               </View>
-            ) : (
+              <Card style={styles.activeTripOuterCard}>
+                <ActiveTripStatusCard
+                  trip={openTrip}
+                  elapsedLabel={elapsedLabel}
+                  onFinish={() => navigation.navigate('ViagemAtual')}
+                />
+              </Card>
+            </>
+          ) : (
+            <Card style={styles.card}>
+              <Text style={styles.cardTitle}>Status da sua viagem</Text>
               <View style={styles.tripInfo}>
                 <Text style={styles.subtitle}>Nenhuma viagem em andamento no momento.</Text>
                 <PrimaryButton title="Iniciar viagem" onPress={() => navigation.navigate('ViagemAtual')} />
               </View>
-            )}
-          </Card>
+            </Card>
+          )}
 
           <Text style={styles.gestorSectionSubtitle}>Resumo Geral</Text>
           <Card style={styles.gestorFilterCard}>
@@ -307,6 +364,66 @@ export function Inicio() {
         </>
       )}
     </ScreenContainer>
+  );
+}
+
+function ActiveTripStatusCard({ trip, elapsedLabel, onFinish }) {
+  const vehicle = trip?.vehicles ?? {};
+  const vehicleTitle = vehicle.placa || 'Veículo em uso';
+  const vehicleDetails = [vehicle.marca, vehicle.modelo].filter(Boolean).join(' • ');
+
+  return (
+    <View style={styles.activeTripCard}>
+      <View style={styles.activeTripHeader}>
+        <View style={styles.activeTripTitleWrap}>
+          <Text style={styles.activeTripPlate}>{vehicleTitle}</Text>
+          <Text style={styles.activeTripVehicle} numberOfLines={1}>
+            {vehicleDetails || 'Veículo corporativo'}
+          </Text>
+        </View>
+        <View style={styles.activeTripProgressPill}>
+          <View style={styles.activeTripProgressDot} />
+          <Text style={styles.activeTripProgressText}>Em progresso</Text>
+        </View>
+      </View>
+
+      <View style={styles.activeTripInfoGrid}>
+        <View style={styles.activeTripInfoBox}>
+          <View style={styles.activeTripInfoLabelRow}>
+            <Ionicons name="time-outline" size={14} color="#64748B" />
+            <Text style={styles.activeTripInfoLabel}>Início</Text>
+          </View>
+          <Text style={styles.activeTripInfoValue}>{formatTripDate(trip.started_at)}</Text>
+          <Text style={styles.activeTripInfoSubvalue}>{formatTripHour(trip.started_at)}</Text>
+        </View>
+
+        <View style={styles.activeTripInfoBox}>
+          <View style={styles.activeTripInfoLabelRow}>
+            <Ionicons name="speedometer-outline" size={14} color="#64748B" />
+            <Text style={styles.activeTripInfoLabel}>KM inicial</Text>
+          </View>
+          <Text style={styles.activeTripInfoValue}>{formatKm(trip.km_inicial)}</Text>
+          <Text style={styles.activeTripInfoSubvalue}>Odômetro</Text>
+        </View>
+      </View>
+
+      <View style={styles.activeTripElapsedBox}>
+        <View style={styles.activeTripElapsedIcon}>
+          <Ionicons name="stopwatch-outline" size={22} color="#FFFFFF" />
+        </View>
+        <View style={styles.activeTripElapsedTextWrap}>
+          <Text style={styles.activeTripElapsedLabel}>Tempo decorrido</Text>
+          <Text style={styles.activeTripElapsedValue}>{elapsedLabel}</Text>
+        </View>
+        <Ionicons name="git-compare-outline" size={20} color="#16A36B" />
+      </View>
+
+      <PrimaryButton
+        title="Finalizar viagem"
+        onPress={onFinish}
+        style={styles.activeTripFinishButton}
+      />
+    </View>
   );
 }
 
@@ -354,6 +471,18 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     marginTop: spacing.xs,
+  },
+  activeTripExternalHeader: {
+    marginTop: spacing.xs,
+    gap: 0,
+  },
+  activeTripExternalEyebrow: {
+    color: '#475569',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: -2,
   },
   sectionHeaderRow: {
     marginTop: spacing.xs,
@@ -485,22 +614,143 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     ...shadows.soft,
   },
+  activeTripOuterCard: {
+    padding: spacing.sm,
+    gap: 0,
+    borderColor: '#D7DEE8',
+    ...shadows.soft,
+  },
   cardTitle: {
     color: colors.primaryDark,
     fontSize: 18,
     fontWeight: '800',
   },
-  tripInfo: {
+  activeTripCard: {
+    gap: spacing.sm,
+  },
+  activeTripHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  activeTripTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  activeTripPlate: {
+    color: colors.primaryDark,
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  activeTripVehicle: {
+    color: '#475569',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  activeTripProgressPill: {
+    minHeight: 30,
+    borderRadius: radius.pill,
+    backgroundColor: '#DBEAFE',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  activeTripProgressDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#60A5FA',
+  },
+  activeTripProgressText: {
+    color: '#2563EB',
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  activeTripInfoGrid: {
+    flexDirection: 'row',
     gap: spacing.xs,
   },
-  infoLabel: {
-    color: colors.textMuted,
-    fontSize: 12,
+  activeTripInfoBox: {
+    flex: 1,
+    minHeight: 86,
+    borderWidth: 1,
+    borderColor: '#DDE5EF',
+    borderRadius: radius.sm,
+    backgroundColor: '#F8FAFC',
+    padding: spacing.sm,
+    justifyContent: 'center',
+    gap: 2,
   },
-  infoValue: {
-    color: colors.text,
-    fontSize: 15,
+  activeTripInfoLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  activeTripInfoLabel: {
+    color: '#334155',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  activeTripInfoValue: {
+    color: colors.primaryDark,
+    fontSize: 17,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  activeTripInfoSubvalue: {
+    color: '#64748B',
+    fontSize: 12,
     fontWeight: '600',
+  },
+  activeTripElapsedBox: {
+    minHeight: 64,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#B7E5CC',
+    backgroundColor: '#E8F8EF',
+    paddingHorizontal: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  activeTripElapsedIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activeTripElapsedTextWrap: {
+    flex: 1,
+    gap: 1,
+  },
+  activeTripElapsedLabel: {
+    color: '#047857',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  activeTripElapsedValue: {
+    color: '#047857',
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  activeTripFinishButton: {
+    minHeight: 46,
+  },
+  tripInfo: {
+    gap: spacing.xs,
   },
 });
 

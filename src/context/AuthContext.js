@@ -2,7 +2,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { toFriendlyError } from '../services/errorUtils';
-import { buscarPerfil, obterSessaoAtiva, entrarComSenha, encerrarSessao } from '../services/Autenticacao';
+import {
+  buscarPerfil,
+  obterSessaoAtiva,
+  entrarComSenha,
+  encerrarSessao,
+  encerrarSessaoLocal,
+} from '../services/Autenticacao';
 import { supabase } from '../services/supabaseClient';
 
 const PROFILE_CACHE_KEY = '@easyfrotas:profile-cache';
@@ -31,6 +37,11 @@ function isConnectivityError(error) {
   );
 }
 
+function isInvalidRefreshTokenError(error) {
+  const message = String(error?.message ?? '').toLowerCase();
+  return message.includes('invalid refresh token') || message.includes('refresh token not found');
+}
+
 async function readProfileCache() {
   try {
     const raw = await AsyncStorage.getItem(PROFILE_CACHE_KEY);
@@ -57,6 +68,15 @@ async function clearProfileCache() {
   } catch (error) {
     // Ignore cleanup failures.
   }
+}
+
+async function limparSessaoPersistida() {
+  try {
+    await encerrarSessaoLocal();
+  } catch (error) {
+    // A sessao local pode ja ter sido removida pelo SDK.
+  }
+  await clearProfileCache();
 }
 
 export const AuthContext = createContext(null);
@@ -109,10 +129,15 @@ export function AuthProvider({ children }) {
           return;
         }
 
-        setAuthError(toFriendlyError(error, 'Sessão inválida.'));
+        if (isInvalidRefreshTokenError(error)) {
+          await limparSessaoPersistida();
+          setAuthError('Sua sessão expirou. Faça login novamente.');
+        } else {
+          setAuthError(toFriendlyError(error, 'Sessão inválida.'));
+          await clearProfileCache();
+        }
         setSession(null);
         setProfile(null);
-        await clearProfileCache();
       }
     },
     [carregarPerfilRemoto, profile?.id],
@@ -153,7 +178,17 @@ export function AuthProvider({ children }) {
   );
 
   const signOut = useCallback(async () => {
-    await encerrarSessao();
+    let logoutError = null;
+    try {
+      const { error } = await encerrarSessao();
+      logoutError = error;
+    } catch (error) {
+      logoutError = error;
+    }
+
+    if (logoutError) {
+      await encerrarSessaoLocal();
+    }
     setSession(null);
     setProfile(null);
     await clearProfileCache();
@@ -198,10 +233,15 @@ export function AuthProvider({ children }) {
         void sincronizarPerfil({ sessao: proximaSessao, cachedProfile: validCachedProfile });
       } catch (error) {
         if (mountedRef.current) {
-          setAuthError(toFriendlyError(error, 'Falha ao carregar sessão.'));
+          if (isInvalidRefreshTokenError(error)) {
+            await limparSessaoPersistida();
+            setAuthError('Sua sessão expirou. Faça login novamente.');
+          } else {
+            setAuthError(toFriendlyError(error, 'Falha ao carregar sessão.'));
+            await clearProfileCache();
+          }
           setSession(null);
           setProfile(null);
-          await clearProfileCache();
         }
       } finally {
         if (mountedRef.current) {

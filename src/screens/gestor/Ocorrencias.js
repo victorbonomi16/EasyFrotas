@@ -1,10 +1,11 @@
 ﻿import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '../../components/ui/Card';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { FloatingCardModal } from '../../components/ui/FloatingCardModal';
 import { ManagementHeaderCard } from '../../components/ui/ManagementHeaderCard';
 import { ScreenContainer } from '../../components/ui/ScreenContainer';
 import { useAuth } from '../../context/useAuth';
@@ -12,11 +13,19 @@ import { listOccurrences, updateOccurrenceStatus } from '../../services/Ocorrenc
 import { colors, radius, shadows, spacing } from '../../theme/tokens';
 import { OCCURRENCE_STATUS, OCCURRENCE_TYPES } from '../../utils/constants';
 
+const DEFAULT_FILTER = 'all';
+
 const TYPE_FILTERS = [
-  { value: '', label: 'Todas' },
+  { value: DEFAULT_FILTER, label: 'Todos os tipos' },
   { value: OCCURRENCE_TYPES.ABASTECIMENTO, label: 'Abastecimento' },
   { value: OCCURRENCE_TYPES.MANUTENCAO, label: 'Manutenção' },
   { value: OCCURRENCE_TYPES.OUTROS, label: 'Outros' },
+];
+
+const STATUS_FILTERS = [
+  { value: DEFAULT_FILTER, label: 'Todos os status' },
+  { value: 'pendente', label: 'Pendentes' },
+  { value: OCCURRENCE_STATUS.RESOLVIDO, label: 'Resolvidos' },
 ];
 
 const TYPE_META = {
@@ -39,16 +48,13 @@ const STATUS_META = {
     label: 'Pendente',
     bg: '#FEE2E2',
     text: '#991B1B',
-  },
-  [OCCURRENCE_STATUS.VISUALIZADO]: {
-    label: 'Visualizado',
-    bg: '#DBEAFE',
-    text: '#1E3A8A',
+    icon: 'time',
   },
   [OCCURRENCE_STATUS.RESOLVIDO]: {
     label: 'Resolvido',
     bg: '#A7F3D0',
     text: '#065F46',
+    icon: 'checkmark-circle',
   },
 };
 
@@ -89,7 +95,9 @@ function formatOccurrenceDate(value) {
 export function Ocorrencias() {
   const { profile } = useAuth();
   const [items, setItems] = useState([]);
-  const [typeFilter, setTypeFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState(DEFAULT_FILTER);
+  const [statusFilter, setStatusFilter] = useState('pendente');
+  const [activeFilter, setActiveFilter] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [updatingById, setUpdatingById] = useState({});
 
@@ -121,11 +129,16 @@ export function Ocorrencias() {
   );
 
   const filteredItems = useMemo(() => {
-    if (!typeFilter) {
-      return items;
-    }
-    return items.filter((item) => item.tipo === typeFilter);
-  }, [items, typeFilter]);
+    return items.filter((item) => {
+      const matchesType = typeFilter === DEFAULT_FILTER || item.tipo === typeFilter;
+      const matchesStatus =
+        statusFilter === DEFAULT_FILTER ||
+        (statusFilter === 'pendente' && item.status !== OCCURRENCE_STATUS.RESOLVIDO) ||
+        item.status === statusFilter;
+
+      return matchesType && matchesStatus;
+    });
+  }, [items, statusFilter, typeFilter]);
 
   const summary = useMemo(() => {
     const pendingCount = items.filter((item) => item.status === OCCURRENCE_STATUS.PENDENTE).length;
@@ -136,6 +149,38 @@ export function Ocorrencias() {
       resolvedCount,
     };
   }, [items]);
+
+  const selectedTypeLabel =
+    typeFilter === DEFAULT_FILTER
+      ? 'Todos'
+      : TYPE_FILTERS.find((item) => item.value === typeFilter)?.label ?? 'Todos';
+
+  const selectedStatusLabel =
+    statusFilter === DEFAULT_FILTER
+      ? 'Todos'
+      : STATUS_FILTERS.find((item) => item.value === statusFilter)?.label ?? 'Todos';
+
+  const activeFilterConfig = useMemo(() => {
+    if (activeFilter === 'tipo') {
+      return {
+        title: 'Filtrar por tipo',
+        selectedId: typeFilter,
+        options: TYPE_FILTERS,
+        onSelect: setTypeFilter,
+      };
+    }
+
+    if (activeFilter === 'status') {
+      return {
+        title: 'Filtrar por status',
+        selectedId: statusFilter,
+        options: STATUS_FILTERS,
+        onSelect: setStatusFilter,
+      };
+    }
+
+    return null;
+  }, [activeFilter, statusFilter, typeFilter]);
 
   const patchItemStatus = useCallback((id, nextStatus) => {
     setItems((old) =>
@@ -185,27 +230,18 @@ export function Ocorrencias() {
           { label: 'Resolvidos', value: summary.resolvedCount },
         ]}
       >
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-          {TYPE_FILTERS.map((filter) => {
-            const selected = typeFilter === filter.value;
-            return (
-              <Pressable
-                key={filter.value || 'all'}
-                accessibilityRole="button"
-                onPress={() => setTypeFilter(filter.value)}
-                style={({ pressed }) => [
-                  styles.filterChip,
-                  selected ? styles.filterChipSelected : null,
-                  pressed ? styles.filterChipPressed : null,
-                ]}
-              >
-                <Text style={[styles.filterChipText, selected ? styles.filterChipTextSelected : null]}>
-                  {filter.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+        <View style={styles.filterGrid}>
+          <FilterSelect
+            value={selectedTypeLabel}
+            icon="options-outline"
+            onPress={() => setActiveFilter('tipo')}
+          />
+          <FilterSelect
+            value={selectedStatusLabel}
+            icon="checkmark-circle-outline"
+            onPress={() => setActiveFilter('status')}
+          />
+        </View>
       </ManagementHeaderCard>
 
       {isLoading && items.length === 0 ? (
@@ -217,7 +253,6 @@ export function Ocorrencias() {
           const type = TYPE_META[item.tipo] ?? TYPE_META[OCCURRENCE_TYPES.OUTROS];
           const status = STATUS_META[item.status] ?? STATUS_META[OCCURRENCE_STATUS.PENDENTE];
           const isUpdating = Boolean(updatingById[item.id]);
-          const canVisualize = item.status === OCCURRENCE_STATUS.PENDENTE;
           const canResolve = item.status !== OCCURRENCE_STATUS.RESOLVIDO;
 
           const vehicleModel = item.trips?.vehicles?.modelo || 'Veículo';
@@ -225,32 +260,49 @@ export function Ocorrencias() {
 
           return (
             <Card key={item.id} style={styles.occurrenceCard}>
-              <View style={styles.cardTopRow}>
-                <View style={styles.vehicleTitleRow}>
-                  <Text style={styles.cardVehicle}>{vehicleModel}</Text>
-                  <Ionicons name="ellipse" size={5} color="#64748B" />
-                  <Text style={styles.cardPlate}>{vehiclePlate}</Text>
+              <View style={styles.occurrenceHeaderRow}>
+                <View style={styles.occurrenceTitleBlock}>
+                  <Text style={styles.occurrencePlate}>{vehiclePlate}</Text>
+                  <Text style={styles.occurrenceVehicleName} numberOfLines={1}>
+                    {vehicleModel}
+                  </Text>
                 </View>
                 <View style={[styles.statusPill, { backgroundColor: status.bg }]}>
-                  <Text style={[styles.statusPillText, { color: status.text }]}>{status.label}</Text>
+                  <Ionicons name={status.icon} size={14} color={status.text} />
+                  <Text style={[styles.statusPillText, { color: status.text }]}>
+                    {status.label.toUpperCase()}
+                  </Text>
                 </View>
               </View>
 
-              <View style={styles.driverRow}>
-                <Ionicons name="person" size={15} color="#6B7280" />
-                <Text style={styles.driverName}>{item.trips?.profiles?.nome || '-'}</Text>
+              <View style={styles.occurrenceInfoRow}>
+                <OccurrenceInfoColumn
+                  icon="person-outline"
+                  label="Motorista"
+                  value={item.trips?.profiles?.nome || '-'}
+                />
+                <OccurrenceInfoColumn
+                  icon={type.icon}
+                  label="Ocorrência"
+                  value={type.label}
+                />
               </View>
 
-              <View style={styles.messageBox}>
-                <View style={styles.typeRow}>
-                  <Ionicons name={type.icon} size={15} color="#4B5563" />
-                  <Text style={styles.typeText}>{type.label}</Text>
+              <View style={styles.occurrenceDetailRow}>
+                <Ionicons name="chatbox-ellipses-outline" size={16} color="#64748B" />
+                <View style={styles.occurrenceDetailTextWrap}>
+                  <Text style={styles.occurrenceDetailLabel}>Detalhes da ocorrência</Text>
+                  <Text style={styles.occurrenceDetailText}>
+                    {item.descricao || 'Sem descrição adicional.'}
+                  </Text>
                 </View>
-                <Text style={styles.descriptionText}>{item.descricao || 'Sem descrição adicional.'}</Text>
               </View>
 
               <View style={styles.cardFooter}>
-                <Text style={styles.dateText}>{formatOccurrenceDate(item.created_at)}</Text>
+                <View style={styles.dateRow}>
+                  <Ionicons name="calendar-outline" size={15} color="#64748B" />
+                  <Text style={styles.dateText}>{formatOccurrenceDate(item.created_at)}</Text>
+                </View>
 
                 {item.status === OCCURRENCE_STATUS.RESOLVIDO ? (
                   <View style={styles.closedWrap}>
@@ -259,28 +311,6 @@ export function Ocorrencias() {
                   </View>
                 ) : (
                   <View style={styles.actionButtons}>
-                    {canVisualize ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        onPress={() => markAs(item, OCCURRENCE_STATUS.VISUALIZADO)}
-                        disabled={isUpdating}
-                        style={({ pressed }) => [
-                          styles.visualizeButton,
-                          pressed ? styles.buttonPressed : null,
-                          isUpdating ? styles.buttonDisabled : null,
-                        ]}
-                      >
-                        {isUpdating ? (
-                          <ActivityIndicator size="small" color="#374151" />
-                        ) : (
-                          <>
-                            <Ionicons name="eye-outline" size={15} color="#374151" />
-                            <Text style={styles.visualizeButtonText}>Visualizar</Text>
-                          </>
-                        )}
-                      </Pressable>
-                    ) : null}
-
                     {canResolve ? (
                       <Pressable
                         accessibilityRole="button"
@@ -309,7 +339,70 @@ export function Ocorrencias() {
           );
         })
       )}
+
+      <FloatingCardModal visible={Boolean(activeFilterConfig)} onRequestClose={() => setActiveFilter(null)}>
+        <Card style={styles.optionsCard}>
+          <Text style={styles.optionsTitle}>{activeFilterConfig?.title}</Text>
+
+          <View style={styles.optionsList}>
+            {activeFilterConfig?.options.map((option) => {
+              const selected = option.value === activeFilterConfig.selectedId;
+              return (
+                <Pressable
+                  key={option.value}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    activeFilterConfig.onSelect(option.value);
+                    setActiveFilter(null);
+                  }}
+                  style={({ pressed }) => [
+                    styles.optionRow,
+                    selected ? styles.optionRowSelected : null,
+                    pressed ? styles.optionRowPressed : null,
+                  ]}
+                >
+                  <Text style={[styles.optionText, selected ? styles.optionTextSelected : null]}>
+                    {option.label}
+                  </Text>
+                  {selected ? <Ionicons name="checkmark-circle" size={20} color={colors.primary} /> : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </Card>
+      </FloatingCardModal>
     </ScreenContainer>
+  );
+}
+
+function FilterSelect({ value, onPress, icon }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.filterSelect, pressed ? styles.filterSelectPressed : null]}
+    >
+      <View style={styles.filterSelectContent}>
+        <Ionicons name={icon} size={15} color={colors.primaryDark} />
+        <Text style={styles.filterSelectValue} numberOfLines={1}>
+          {value}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function OccurrenceInfoColumn({ icon, label, value }) {
+  return (
+    <View style={styles.infoColumn}>
+      <View style={styles.infoLabelRow}>
+        <Ionicons name={icon} size={15} color="#64748B" />
+        <Text style={styles.infoLabel}>{label}</Text>
+      </View>
+      <Text style={styles.infoValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
@@ -318,123 +411,186 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     gap: spacing.md,
   },
-  filterRow: {
+  filterGrid: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    paddingRight: spacing.md,
+    flexWrap: 'wrap',
+    gap: spacing.xs,
   },
-  filterChip: {
-    minHeight: 44,
-    minWidth: 122,
+  filterSelect: {
+    width: '48.7%',
+    minHeight: 48,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#BFCADB',
-    backgroundColor: '#D8E1EF',
-    paddingHorizontal: spacing.md,
+    borderColor: '#DCE3EC',
+    backgroundColor: '#EEF2F6',
+    paddingHorizontal: spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  filterChipSelected: {
-    borderColor: '#0B1220',
-    backgroundColor: '#0B1220',
+  filterSelectPressed: {
+    opacity: 0.85,
   },
-  filterChipPressed: {
-    opacity: 0.88,
+  filterSelectContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xxs,
   },
-  filterChipText: {
-    color: '#1F2937',
-    fontSize: 14,
-    fontWeight: '700',
+  filterSelectValue: {
+    color: colors.primaryDark,
+    fontSize: 13,
+    fontWeight: '900',
+    textAlign: 'center',
   },
-  filterChipTextSelected: {
-    color: '#FFFFFF',
+  optionsCard: {
+    gap: spacing.md,
   },
-  occurrenceCard: {
-    borderColor: '#C7D0DD',
-    borderRadius: radius.md,
-    padding: spacing.md,
+  optionsTitle: {
+    color: colors.primaryDark,
+    fontSize: 19,
+    fontWeight: '900',
+  },
+  optionsList: {
     gap: spacing.xs,
-    ...shadows.soft,
   },
-  cardTopRow: {
+  optionRow: {
+    minHeight: 48,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#E3E9F2',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  vehicleTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
+  optionRowSelected: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#ECFDF5',
+  },
+  optionRowPressed: {
+    opacity: 0.85,
+  },
+  optionText: {
     flex: 1,
-  },
-  cardVehicle: {
     color: colors.primaryDark,
-    fontSize: 17,
-    fontWeight: '800',
-    maxWidth: '60%',
+    fontSize: 15,
+    fontWeight: '700',
   },
-  cardPlate: {
+  optionTextSelected: {
+    color: colors.primary,
+    fontWeight: '900',
+  },
+  occurrenceCard: {
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    padding: spacing.md,
+    gap: spacing.sm,
+    ...shadows.soft,
+  },
+  occurrenceHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+  },
+  occurrenceTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  occurrencePlate: {
     color: colors.primaryDark,
-    fontSize: 17,
-    fontWeight: '800',
+    fontSize: 21,
+    fontWeight: '900',
+  },
+  occurrenceVehicleName: {
+    color: '#64748B',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 4,
   },
   statusPill: {
-    borderRadius: radius.sm,
+    borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   statusPillText: {
     fontSize: 12,
+    fontWeight: '900',
+  },
+  occurrenceInfoRow: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+    marginTop: spacing.xs,
+  },
+  infoColumn: {
+    flex: 1,
+    minWidth: 0,
+  },
+  infoLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  infoLabel: {
+    color: '#64748B',
+    fontSize: 12,
     fontWeight: '800',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
-  driverRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  driverName: {
-    color: '#374151',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  messageBox: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: '#D9E1ED',
-    backgroundColor: '#F1F5F9',
-    padding: spacing.sm,
-    gap: spacing.xs,
-  },
-  typeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  typeText: {
-    color: '#4B5563',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  descriptionText: {
-    color: '#1F2937',
+  infoValue: {
+    color: colors.primaryDark,
     fontSize: 15,
-    lineHeight: 22,
+    fontWeight: '800',
+    marginTop: 5,
+  },
+  occurrenceDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+    paddingTop: spacing.xs,
+  },
+  occurrenceDetailTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  occurrenceDetailLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  occurrenceDetailText: {
+    color: '#334155',
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '500',
   },
   cardFooter: {
+    borderTopWidth: 1,
+    borderTopColor: '#EEF2F7',
+    paddingTop: spacing.sm,
+    marginTop: spacing.xs,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
+  dateRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
   dateText: {
     flex: 1,
-    color: '#1F2937',
+    color: '#334155',
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   closedWrap: {
     flexDirection: 'row',
@@ -450,23 +606,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-  },
-  visualizeButton: {
-    minHeight: 40,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: '#C9D2DE',
-    backgroundColor: '#EFF3F9',
-    paddingHorizontal: spacing.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: spacing.xxs,
-  },
-  visualizeButtonText: {
-    color: '#374151',
-    fontSize: 13,
-    fontWeight: '700',
   },
   resolveButton: {
     minHeight: 44,

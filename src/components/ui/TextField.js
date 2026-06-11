@@ -15,6 +15,7 @@ export function TextField({
   multiline = false,
   numberOfLines = 1,
   editable = true,
+  maxLength,
 }) {
   return (
     <View style={styles.wrapper}>
@@ -30,6 +31,7 @@ export function TextField({
         multiline={multiline}
         numberOfLines={numberOfLines}
         editable={editable}
+        maxLength={maxLength}
         style={[
           styles.input,
           multiline ? styles.multiline : null,

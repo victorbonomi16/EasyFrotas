@@ -11,6 +11,10 @@ export async function encerrarSessao() {
   return supabase.auth.signOut();
 }
 
+export async function encerrarSessaoLocal() {
+  return supabase.auth.signOut({ scope: 'local' });
+}
+
 export async function obterSessaoAtiva() {
   return supabase.auth.getSession();
 }

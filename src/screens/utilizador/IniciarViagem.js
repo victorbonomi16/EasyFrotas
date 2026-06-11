@@ -12,10 +12,8 @@ import {
 } from 'react-native';
 
 import { Card } from '../../components/ui/Card';
-import { LeitorQuilometragemModal } from '../../components/ui/LeitorQuilometragemModal';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { ScreenContainer } from '../../components/ui/ScreenContainer';
-import { leituraCameraDisponivel } from '../../services/LeituraQuilometragem';
 import { startTrip } from '../../services/Viagens';
 import { colors, radius, shadows, spacing } from '../../theme/tokens';
 import { formatKm, sanitizeNumber } from '../../utils/formatters';
@@ -33,8 +31,6 @@ export function IniciarViagem({ route, navigation }) {
   const [destinoViagem, setDestinoViagem] = useState('');
   const [observacaoInicio, setObservacaoInicio] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isLeitorKmVisible, setIsLeitorKmVisible] = useState(false);
-  const cameraReaderEnabled = leituraCameraDisponivel();
 
   const currentTimeLabel = useMemo(() => formatClock(new Date().toISOString()), []);
 
@@ -150,18 +146,6 @@ export function IniciarViagem({ route, navigation }) {
           />
           <Text style={styles.kmSuffix}>km</Text>
         </View>
-        {cameraReaderEnabled ? (
-          <View style={styles.kmActionRow}>
-            <PrimaryButton
-              title="Ler painel com câmera"
-              variant="ghost"
-              onPress={() => setIsLeitorKmVisible(true)}
-              style={styles.kmActionButton}
-            />
-          </View>
-        ) : (
-          <Text style={styles.kmActionUnavailable}>Leitura por câmera disponível na APK.</Text>
-        )}
         <Text style={[styles.fieldLabel, styles.destinationLabel]}>Destino da viagem *</Text>
         <TextInput
           value={destinoViagem}
@@ -204,16 +188,6 @@ export function IniciarViagem({ route, navigation }) {
         )}
       </Pressable>
 
-      {cameraReaderEnabled ? (
-        <LeitorQuilometragemModal
-          visible={isLeitorKmVisible}
-          onClose={() => setIsLeitorKmVisible(false)}
-          onConfirmKm={(valor) => setKmInicial(String(valor))}
-          minKm={Number(vehicle?.km_atual ?? 0)}
-          titulo="Leitura do KM inicial"
-          subtitulo="Posicione o odômetro na moldura para preencher o KM de início."
-        />
-      ) : null}
     </ScreenContainer>
   );
 }
@@ -383,18 +357,6 @@ const styles = StyleSheet.create({
   },
   destinationLabel: {
     marginTop: spacing.xs,
-  },
-  kmActionRow: {
-    marginTop: spacing.xxs,
-  },
-  kmActionButton: {
-    minHeight: 44,
-  },
-  kmActionUnavailable: {
-    marginTop: spacing.xxs,
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: '500',
   },
   destinationInput: {
     minHeight: 50,
