@@ -866,8 +866,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   filterSelectClear: {
-    borderColor: colors.primaryDark,
-    backgroundColor: colors.primaryDark,
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
   },
   filterSelectPressed: {
     opacity: 0.85,
@@ -943,8 +943,8 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#E3E9F2',
-    backgroundColor: '#F8FAFC',
+    borderColor: '#DCE3EC',
+    backgroundColor: '#EEF2F6',
     paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
@@ -973,8 +973,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   periodApplyButton: {
-    borderColor: colors.primaryDark,
-    backgroundColor: colors.primaryDark,
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
   },
   periodCancelText: {
     color: colors.primaryDark,

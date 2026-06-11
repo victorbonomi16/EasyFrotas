@@ -1,6 +1,6 @@
 ﻿import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, StyleSheet, Text, View } from 'react-native';
 import { z } from 'zod';
 
 import { Card } from '../../components/ui/Card';
@@ -16,6 +16,8 @@ const loginSchema = z.object({
   email: z.string().email('Informe um e-mail válido.'),
   password: z.string().min(6, 'A senha precisa ter pelo menos 6 caracteres.'),
 });
+
+const logoApp = require('../../../assets/logo-app.png');
 
 export function Login() {
   const { signIn, authError } = useAuth();
@@ -58,6 +60,7 @@ export function Login() {
   return (
     <ScreenContainer scroll={false} contentStyle={styles.container}>
       <View style={styles.header}>
+        <Image source={logoApp} style={styles.logo} resizeMode="contain" />
         <Text style={styles.brand}>Easy Frotas</Text>
         <Text style={styles.subtitle}>Controle digital de veículos da Coopercocal</Text>
       </View>
@@ -72,7 +75,7 @@ export function Login() {
           render={({ field: { value, onChange } }) => (
             <TextField
               label="E-mail"
-              placeholder="seuemail@empresa.com"
+              placeholder="seuemail@coopercocal.com.br"
               value={value}
               onChangeText={onChange}
               keyboardType="email-address"
@@ -118,20 +121,31 @@ export function Login() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    gap: spacing.lg,
+    justifyContent: 'flex-start',
+    paddingTop: spacing.xxl + spacing.md,
+    gap: spacing.md,
   },
   header: {
-    gap: spacing.xs,
+    alignItems: 'center',
+    gap: 0,
+  },
+  logo: {
+    width: 302,
+    height: 116,
+    marginBottom: -spacing.xs,
   },
   brand: {
     color: colors.primaryDark,
-    fontSize: 34,
+    fontSize: 40,
     fontWeight: '900',
+    textAlign: 'center',
   },
   subtitle: {
     color: colors.textMuted,
-    fontSize: 15,
+    fontSize: 14,
+    lineHeight: 21,
+    maxWidth: 340,
+    textAlign: 'center',
   },
   card: {
     gap: spacing.sm,

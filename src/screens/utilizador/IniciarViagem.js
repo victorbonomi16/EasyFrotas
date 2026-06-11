@@ -158,7 +158,7 @@ export function IniciarViagem({ route, navigation }) {
         <TextInput
           value={observacaoInicio}
           onChangeText={setObservacaoInicio}
-          placeholder="Ex: Veículo com leve arranhão no para-choque traseiro."
+          placeholder="Ex: Quilometragem não bate com a do veículo"
           placeholderTextColor={colors.textMuted}
           multiline
           numberOfLines={3}

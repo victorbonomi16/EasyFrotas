@@ -3,6 +3,7 @@ import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useMemo } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoadingView } from '../components/ui/LoadingView';
 import { useAuth } from '../context/useAuth';
@@ -45,8 +46,11 @@ function iconeAba(nomeRota, focado) {
 }
 
 function AbasGestor() {
+  const insets = useSafeAreaInsets();
+  const screenOptions = useMemo(() => criarOpcoesAbas(insets), [insets]);
+
   return (
-    <Tab.Navigator screenOptions={opcoesAbas}>
+    <Tab.Navigator screenOptions={screenOptions}>
       <Tab.Screen name="Home" component={Inicio} options={{ title: 'Início' }} />
       <Tab.Screen name="Utilizadores" component={Utilizadores} options={{ title: 'Usuários' }} />
       <Tab.Screen name="Veiculos" component={Veiculos} options={{ title: 'Veículos' }} />
@@ -57,8 +61,11 @@ function AbasGestor() {
 }
 
 function AbasUtilizador() {
+  const insets = useSafeAreaInsets();
+  const screenOptions = useMemo(() => criarOpcoesAbas(insets), [insets]);
+
   return (
-    <Tab.Navigator screenOptions={opcoesAbas}>
+    <Tab.Navigator screenOptions={screenOptions}>
       <Tab.Screen name="Home" component={Inicio} options={{ title: 'Início' }} />
       <Tab.Screen name="ViagemAtual" component={ViagemEmAndamento} options={{ title: 'Viagem' }} />
       <Tab.Screen name="Historico" component={Historico} options={{ title: 'Histórico' }} />
@@ -66,34 +73,40 @@ function AbasUtilizador() {
   );
 }
 
-function opcoesAbas({ route }) {
-  return {
-    headerShown: false,
-    tabBarHideOnKeyboard: true,
-    tabBarActiveTintColor: colors.primary,
-    tabBarInactiveTintColor: colors.textMuted,
-    tabBarLabelStyle: {
-      fontSize: 12,
-      fontWeight: '700',
-      marginTop: -1,
-    },
-    tabBarItemStyle: {
-      paddingTop: 4,
-      paddingBottom: 8,
-    },
-    tabBarStyle: {
-      minHeight: 74,
-      paddingBottom: 14,
-      paddingTop: 4,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-      backgroundColor: colors.surface,
-      elevation: 0,
-      shadowOpacity: 0,
-    },
-    tabBarIcon: ({ color, focused, size }) => (
-      <Ionicons name={iconeAba(route.name, focused)} size={size} color={color} />
-    ),
+function criarOpcoesAbas(insets) {
+  const bottomInset = Math.max(insets?.bottom ?? 0, 0);
+  const bottomSafeSpace = Math.max(bottomInset, 10);
+  const tabBarHeight = 66 + bottomSafeSpace;
+
+  return function opcoesAbas({ route }) {
+    return {
+      headerShown: false,
+      tabBarHideOnKeyboard: true,
+      tabBarActiveTintColor: colors.primary,
+      tabBarInactiveTintColor: colors.textMuted,
+      tabBarLabelStyle: {
+        fontSize: 12,
+        fontWeight: '700',
+        marginTop: -1,
+      },
+      tabBarItemStyle: {
+        paddingTop: 6,
+        paddingBottom: 2,
+      },
+      tabBarStyle: {
+        height: tabBarHeight,
+        paddingTop: 6,
+        paddingBottom: bottomSafeSpace,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+        backgroundColor: colors.surface,
+        elevation: 0,
+        shadowOpacity: 0,
+      },
+      tabBarIcon: ({ color, focused, size }) => (
+        <Ionicons name={iconeAba(route.name, focused)} size={size} color={color} />
+      ),
+    };
   };
 }
 
