@@ -729,7 +729,7 @@ export function Historico() {
           style={({ pressed }) => [
             styles.exportFab,
             isExporting ? styles.exportFabLoading : null,
-            { bottom: 78 + insets.bottom },
+            { bottom: insets.bottom },
             pressed ? styles.exportFabPressed : null,
           ]}
         >

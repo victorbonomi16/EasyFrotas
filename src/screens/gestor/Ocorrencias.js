@@ -220,7 +220,7 @@ export function Ocorrencias() {
   };
 
   return (
-    <ScreenContainer contentStyle={styles.container} safeEdges={['top', 'left', 'right', 'bottom']}>
+    <ScreenContainer contentStyle={styles.container}  >
       <ManagementHeaderCard
         title="Ocorrências"
         subtitle="Revise e gerencie os alertas reportados na frota."
